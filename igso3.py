@@ -6,6 +6,7 @@ import torch
 
 L_default = 2000
 
+
 def igso3_expansion(omega, sigma, L=L_default):
     """Truncated sum of IGSO(3) distribution.
 
@@ -27,8 +28,9 @@ def igso3_expansion(omega, sigma, L=L_default):
     """
     p = 0
     for l in range(L):
-        p += (2*l + 1) * np.exp(-l*(l+1)*sigma**2/2) * np.sin(omega*(l+1/2)) / np.sin(omega/2)
+        p += (2 * l + 1) * np.exp(-l * (l + 1) * sigma ** 2 / 2) * np.sin(omega * (l + 1 / 2)) / np.sin(omega / 2)
     return p
+
 
 def igso3_expansion_torch(omega, sigma, L=L_default):
     """Truncated sum of IGSO(3) distribution implemented in torch
@@ -40,7 +42,8 @@ def igso3_expansion_torch(omega, sigma, L=L_default):
     """
     p = 0
     for l in range(L):
-        p += (2*l + 1) * torch.exp(-l*(l+1)*sigma**2/2) * torch.sin(omega*(l+1/2)) / torch.sin(omega/2)
+        p += (2 * l + 1) * torch.exp(-l * (l + 1) * sigma ** 2 / 2) * torch.sin(omega * (l + 1 / 2)) / torch.sin(
+            omega / 2)
     return p
 
 
@@ -57,10 +60,10 @@ def density(expansion, omega, marginal=True):
     """
     if marginal:
         # if marginal, density over [0, pi], else over SO(3)
-        return expansion * (1-np.cos(omega))/np.pi
+        return expansion * (1 - np.cos(omega)) / np.pi
     else:
         # the constant factor doesn't affect any actual calculations though
-        return expansion / 8 / np.pi**2
+        return expansion / 8 / np.pi ** 2
 
 
 def calc_score_norm(exp, omega, sigma, L=L_default):  # score of density over SO(3)
@@ -93,8 +96,9 @@ def calc_score_norm(exp, omega, sigma, L=L_default):  # score of density over SO
         dhi = (l + 1 / 2) * np.cos(omega * (l + 1 / 2))
         lo = np.sin(omega / 2)
         dlo = 1 / 2 * np.cos(omega / 2)
-        dSigma += (2 * l + 1) * np.exp(-l * (l + 1) * sigma**2/2) * (lo * dhi - hi * dlo) / lo ** 2
+        dSigma += (2 * l + 1) * np.exp(-l * (l + 1) * sigma ** 2 / 2) * (lo * dhi - hi * dlo) / lo ** 2
     return dSigma / exp
+
 
 def calc_score_norm_torch(omega, sigma, L=L_default):  # score of density over SO(3)
     """calc_score_norm_torch is a differentiable torch implementation of calc_score_norm
@@ -108,7 +112,7 @@ def calc_score_norm_torch(omega, sigma, L=L_default):  # score of density over S
     Returns:
         The d/d omega log IGSO3(omega; sigma)/(1-cos(omega))
     """
-    
+
     # first compute truncation of the power series expansion
     exp = igso3_expansion_torch(omega, sigma, L=L)
 
@@ -118,10 +122,11 @@ def calc_score_norm_torch(omega, sigma, L=L_default):  # score of density over S
         dhi = (l + 1 / 2) * torch.cos(omega * (l + 1 / 2))
         lo = torch.sin(omega / 2)
         dlo = 1 / 2 * torch.cos(omega / 2)
-        dSigma += (2 * l + 1) * torch.exp(-l * (l + 1) * sigma**2/2) * (lo * dhi - hi * dlo) / lo ** 2
+        dSigma += (2 * l + 1) * torch.exp(-l * (l + 1) * sigma ** 2 / 2) * (lo * dhi - hi * dlo) / lo ** 2
     return dSigma / exp
 
-def calculate_igso3(*, num_sigma, num_omega, min_sigma, max_sigma, L=L_default):
+
+def calculate_igso3(*, num_sigma, num_omega, min_sigma, max_sigma, L=L_default) -> dict[str, np.ndarray]:
     """calculate_igso3 pre-computes numerical approximations to the IGSO3 cdfs
     and score norms and expected squared score norms.
 
@@ -135,7 +140,7 @@ def calculate_igso3(*, num_sigma, num_omega, min_sigma, max_sigma, L=L_default):
             be too low or it will create numerical instability.
     """
     # Discretize omegas for calculating CDFs. Skip omega=0.
-    discrete_omega = np.linspace(0, np.pi, num_omega+1)[1:]
+    discrete_omega = np.linspace(0, np.pi, num_omega + 1)[1:]
 
     # Exponential noise schedule.  This choice is closely tied to the
     # scalings used when simulating the reverse time SDE. For each step n,
@@ -162,8 +167,8 @@ def calculate_igso3(*, num_sigma, num_omega, min_sigma, max_sigma, L=L_default):
     # Compute the standard deviation of the score norm for each sigma
     exp_score_norms = np.sqrt(
         np.sum(
-            score_norm**2 * pdf_vals, axis=1) / np.sum(
-                pdf_vals, axis=1))
+            score_norm ** 2 * pdf_vals, axis=1) / np.sum(
+            pdf_vals, axis=1))
     return {
         'cdf': cdf_vals,
         'score_norm': score_norm,

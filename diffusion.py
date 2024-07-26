@@ -1,5 +1,5 @@
 # script for diffusion protocols 
-import torch 
+import torch
 import pickle
 import numpy as np
 import os
@@ -7,28 +7,29 @@ import logging
 from typing import List
 
 from scipy.spatial.transform import Rotation as scipy_R
-from scipy.spatial.transform import Slerp 
+from scipy.spatial.transform import Slerp
 import rotation_conversions
 
 from util import rigid_from_3_points, get_torsions
 
-from util import torsion_indices as TOR_INDICES 
+from util import torsion_indices as TOR_INDICES
 from util import torsion_can_flip as TOR_CAN_FLIP
 from util import reference_angles as REF_ANGLES
 
 from util_module import ComputeAllAtomCoords
 
-from chemical import INIT_CRDS 
+from chemical import INIT_CRDS
 import igso3
-import time 
+import time
 
-from icecream import ic  
+from icecream import ic
 
 from rf2aa.chemical import ChemicalData as ChemData
 
 torch.set_printoptions(sci_mode=False)
 
-def cosine_interp(T, eta_max, eta_min):
+
+def cosine_interp(T: int, eta_max: float, eta_min: float):
     """
     Cosine interpolation of some value between its max <eta_max> and its min <eta_min>
 
@@ -39,10 +40,11 @@ def cosine_interp(T, eta_max, eta_min):
         eta_max (float, required): Max value of some parameter eta 
         eta_min (float, required): Min value of some parameter eta 
     """
-    
+
     t = torch.arange(T)
-    out = eta_max + 0.5*(eta_min-eta_max)*(1+torch.cos((t/T)*np.pi))
-    return out 
+    out = eta_max + 0.5 * (eta_min - eta_max) * (1 + torch.cos((t / T) * np.pi))
+    return out
+
 
 def get_chi_betaT(max_timestep=100, beta_0=0.01, abar_T=1e-3, method='cosine'):
     """
@@ -56,16 +58,17 @@ def get_chi_betaT(max_timestep=100, beta_0=0.01, abar_T=1e-3, method='cosine'):
         print('Calculating chi_beta_T dictionary...')
 
         if method not in ['cosine', 'linear']:
-            raise NotImplementedError("Only cosine and linear interpolations are implemented for chi angle beta schedule")
-        beta_Ts = {1:1.}
-        for timestep in range(2,101):
-            best=999.99
-            for i in torch.linspace(beta_0,0.999,5000): #sampling bT
+            raise NotImplementedError(
+                "Only cosine and linear interpolations are implemented for chi angle beta schedule")
+        beta_Ts = {1: 1.}
+        for timestep in range(2, 101):
+            best = 999.99
+            for i in torch.linspace(beta_0, 0.999, 5000):  # sampling bT
                 if method == 'cosine':
                     interp = cosine_interp(timestep, i, beta_0)
                 elif method == 'linear':
                     interp = torch.linspace(beta_0, i, timestep)
-                temp = torch.cumprod(1-interp, dim=0)
+                temp = torch.cumprod(1 - interp, dim=0)
                 if torch.abs(temp[-1] - abar_T) < best:
                     best = temp[-1] - abar_T
                     idx = i
@@ -84,63 +87,64 @@ def get_chi_betaT(max_timestep=100, beta_0=0.01, abar_T=1e-3, method='cosine'):
         with open(name, 'rb') as fp:
             beta_Ts = pickle.load(fp)
 
-
     print('Done calculating chi_beta_T, chi_alphas_T, and chi_abars_T dictionaries.')
     return beta_Ts
+
 
 def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}, inference=False):
     """
     Given a noise schedule type, create the beta schedule 
     """
     assert schedule_type in ['linear', 'geometric', 'cosine']
-    if T not in [1,2]: # HACK: T=1|2 only used in testing
+    if T not in [1, 2]:  # HACK: T=1|2 only used in testing
         assert T >= 15, "With discrete time and T < 15, the schedule is badly approximated"
         b0 *= (200 / T)
         bT *= (200 / T)
 
     # linear noise schedule 
     if schedule_type == 'linear':
-        schedule = torch.linspace(b0, bT, T) 
+        schedule = torch.linspace(b0, bT, T)
 
-    # geometric noise schedule 
-    elif schedule_type == 'geometric': 
+        # geometric noise schedule
+    elif schedule_type == 'geometric':
         raise NotImplementedError('geometric schedule not ready yet')
-    
+
     # cosine noise schedule 
     else:
-        raise NotImplementedError('Cosine schedule has been disabled because variance with different T will need to be worked out')
-        schedule = cosine_interp(T, bT, b0) 
-    
-    
-    #get alphabar_t for convenience
-    alpha_schedule = 1-schedule
-    alphabar_t_schedule  = torch.cumprod(alpha_schedule, dim=0)
-    
+        raise NotImplementedError(
+            'Cosine schedule has been disabled because variance with different T will need to be worked out')
+        schedule = cosine_interp(T, bT, b0)
+
+        # get alphabar_t for convenience
+    alpha_schedule = 1 - schedule
+    alphabar_t_schedule = torch.cumprod(alpha_schedule, dim=0)
+
     if inference:
-        print(f"With this beta schedule ({schedule_type} schedule, beta_0 = {b0}, beta_T = {bT}), alpha_bar_T = {alphabar_t_schedule[-1]}")
+        print(
+            f"With this beta schedule ({schedule_type} schedule, beta_0 = {b0}, beta_T = {bT}), alpha_bar_T = {alphabar_t_schedule[-1]}")
 
-    return schedule, alpha_schedule, alphabar_t_schedule 
+    return schedule, alpha_schedule, alphabar_t_schedule
 
 
-class EuclideanDiffuser():
+class EuclideanDiffuser:
     # class for diffusing points 
 
     def __init__(self,
-                 T, 
-                 b_0, 
-                 b_T, 
+                 T,
+                 b_0,
+                 b_T,
                  schedule_type='linear',
                  schedule_kwargs={},
                  ):
-        
-        self.T = T 
-        
-        # make noise/beta schedule 
-        self.beta_schedule, _, self.alphabar_schedule  = get_beta_schedule(T, b_0, b_T, schedule_type, **schedule_kwargs)
-        self.alpha_schedule = 1-self.beta_schedule 
 
-    
-    # NOTE: this one seems fishy - doesn't match apply_kernel
+        self.T = T
+
+        # make noise/beta schedule 
+        self.beta_schedule, _, self.alphabar_schedule = get_beta_schedule(T, b_0, b_T, schedule_type, **schedule_kwargs)
+        self.alpha_schedule = 1 - self.beta_schedule
+
+        # NOTE: this one seems fishy - doesn't match apply_kernel
+
     #def apply_kernel_closed(self, x0, t, var_scale=1, mask=None):
     #    """
     #    Applies a noising kernel to the points in x 
@@ -160,17 +164,14 @@ class EuclideanDiffuser():
     #    # c-alpha crds 
     #    ca_xyz = x0[:,1,:]
 
-
-    #    b_t = self.beta_schedule[t_idx]    
+    #    b_t = self.beta_schedule[t_idx]
     #    a_t = self.alpha_schedule[t_idx]
-
 
     #    # get the noise at timestep t
     #    a_bar = torch.prod(self.alpha_schedule[:t_idx], dim=0)
 
     #    mean  = torch.sqrt(a_bar)*ca_xyz 
     #    var   = torch.ones(L,3)*(1-a_bar)*var_scale
-
 
     #    sampled_crds = torch.normal(mean, var)
     #    delta = sampled_crds - ca_xyz
@@ -182,10 +183,8 @@ class EuclideanDiffuser():
 
     #    return out_crds 
 
-
     def diffuse_translations(self, xyz, diffusion_mask=None, var_scale=1):
         return self.apply_kernel_recursive(xyz, diffusion_mask, var_scale)
-
 
     def apply_kernel(self, x, t, diffusion_mask=None, var_scale=1):
         """
@@ -198,52 +197,49 @@ class EuclideanDiffuser():
 
             noise_scale (float, required): scale for noise 
         """
-        t_idx = t-1 # bring from 1-indexed to 0-indexed
+        t_idx = t - 1  # bring from 1-indexed to 0-indexed
 
         assert len(x.shape) == 3
-        L,_,_ = x.shape 
+        L, _, _ = x.shape
 
         # c-alpha crds 
-        ca_xyz = x[:,1,:]
+        ca_xyz = x[:, 1, :]
 
-
-        b_t = self.beta_schedule[t_idx]    
-
+        b_t = self.beta_schedule[t_idx]
 
         # get the noise at timestep t
-        mean  = torch.sqrt(1-b_t)*ca_xyz
-        var   = torch.ones(L,3)*(b_t)*var_scale
+        mean = torch.sqrt(1 - b_t) * ca_xyz
+        var = torch.ones(L, 3) * (b_t) * var_scale
 
-        sampled_crds = torch.normal(mean, torch.sqrt(var)) 
-        delta = sampled_crds - ca_xyz  
+        sampled_crds = torch.normal(mean, torch.sqrt(var))
+        delta = sampled_crds - ca_xyz
 
         if not diffusion_mask is None:
-            delta[diffusion_mask,...] = 0
+            delta[diffusion_mask, ...] = 0
 
-        out_crds = x + delta[:,None,:]
+        out_crds = x + delta[:, None, :]
 
         return out_crds, delta
-
 
     def apply_kernel_recursive(self, xyz, diffusion_mask=None, var_scale=1):
         """
         Repeatedly apply self.apply_kernel T times and return all crds 
         """
         bb_stack = []
-        T_stack  = []
+        T_stack = []
 
-        cur_xyz  = torch.clone(xyz)  
+        cur_xyz = torch.clone(xyz)
 
-        for t in range(1,self.T+1):     
-            cur_xyz, cur_T = self.apply_kernel(cur_xyz, 
-                                        t, 
-                                        var_scale=var_scale, 
-                                        diffusion_mask=diffusion_mask)
+        for t in range(1, self.T + 1):
+            cur_xyz, cur_T = self.apply_kernel(cur_xyz,
+                                               t,
+                                               var_scale=var_scale,
+                                               diffusion_mask=diffusion_mask)
             bb_stack.append(cur_xyz)
             T_stack.append(cur_T)
-        
 
-        return torch.stack(bb_stack).transpose(0,1), torch.stack(T_stack).transpose(0,1)
+        return torch.stack(bb_stack).transpose(0, 1), torch.stack(T_stack).transpose(0, 1)
+
 
 def write_pkl(save_path: str, pkl_data):
     """Serialize data into a pickle file."""
@@ -259,16 +255,17 @@ def read_pkl(read_path: str, verbose=False):
         except Exception as e:
             if verbose:
                 print(f'Failed to read {read_path}')
-            raise(e)
+            raise (e)
 
-class IGSO3():
+
+class IGSO3:
     """
     Class for taking in a set of backbone crds and performing IGSO3 diffusion
     on all of them
     """
 
-    def __init__(self, *, T, min_sigma, max_sigma, min_b, max_b,
-            cache_dir, num_omega=1000, schedule="linear", L=2000):
+    def __init__(self, *, T: int, min_sigma, max_sigma, min_b, max_b,
+                 cache_dir, num_omega=1000, schedule="linear", L=2000):
         """
 
         Args:
@@ -284,9 +281,7 @@ class IGSO3():
         """
         self._log = logging.getLogger(__name__)
 
-
         self.T = T
-
 
         self.schedule = schedule
         self.cache_dir = cache_dir
@@ -300,11 +295,11 @@ class IGSO3():
         self.num_omega = num_omega
         self.num_sigma = 500
         # Calculate igso3 values.
-        self.L = L # truncation level
+        self.L = L  # truncation level
         self.igso3_vals = self._calc_igso3_vals(L=L)
         self.step_size = 1 / self.T
 
-    def _calc_igso3_vals(self, L=2000):
+    def _calc_igso3_vals(self, L=2000) -> dict[str, np.ndarray]:
         """_calc_igso3_vals computes numerical approximations to the
         relevant analytically intractable functionals of the igso3
         distribution.
@@ -318,18 +313,16 @@ class IGSO3():
         replace_period = lambda x: str(x).replace('.', '_')
         if self.schedule == 'linear':
             cache_fname = os.path.join(
-                self.cache_dir, f'T_{self.T}_omega_{self.num_omega}_min_sigma_{replace_period(self.min_sigma)}'+
-                f'_min_b_{replace_period(self.min_b)}_max_b_{replace_period(self.max_b)}_schedule_{self.schedule}.pkl'
+                self.cache_dir, f'T_{self.T}_omega_{self.num_omega}_min_sigma_{replace_period(self.min_sigma)}' +
+                                f'_min_b_{replace_period(self.min_b)}_max_b_{replace_period(self.max_b)}_schedule_{self.schedule}.pkl'
             )
         elif self.schedule == 'exponential':
             cache_fname = os.path.join(
                 self.cache_dir, f'T_{self.T}_omega_{self.num_omega}_min_sigma_{replace_period(self.min_sigma)}'
-                f'_max_sigma_{replace_period(self.max_sigma)}_schedule_{self.schedule}'
+                                f'_max_sigma_{replace_period(self.max_sigma)}_schedule_{self.schedule}'
             )
         else:
             raise ValueError(f'Unrecognize schedule {self.schedule}')
-
-
 
         if not os.path.isdir(self.cache_dir):
             os.makedirs(self.cache_dir)
@@ -364,7 +357,7 @@ class IGSO3():
         Args:
             t: time index (integer between 1 and 200) 
         """
-        continuous_t = t/self.T
+        continuous_t = t / self.T
         return self.sigma_idx(self.sigma(continuous_t))
 
     def sigma(self, t: torch.tensor):
@@ -379,13 +372,13 @@ class IGSO3():
         if self.schedule == 'exponential':
             sigma = t * np.log10(self.max_sigma) + (1 - t) * np.log10(self.min_sigma)
             return 10 ** sigma
-        elif self.schedule == 'linear': # Variance exploding analogue of Ho schedule
+        elif self.schedule == 'linear':  # Variance exploding analogue of Ho schedule
             # add self.min_sigma for stability
-            return self.min_sigma + t*self.min_b  + (1/2)*(t**2)*(self.max_b - self.min_b)
+            return self.min_sigma + t * self.min_b + (1 / 2) * (t ** 2) * (self.max_b - self.min_b)
         else:
             raise ValueError(f'Unrecognize schedule {self.schedule}')
 
-    def g(self, t):
+    def g(self, t) -> torch.Tensor:
         """g returns the drift coefficient at time t
 
         since 
@@ -400,10 +393,9 @@ class IGSO3():
             drift cooeficient as a scalar.
         """
         t = torch.tensor(t, requires_grad=True)
-        sigma_sqr = self.sigma(t)**2
+        sigma_sqr = self.sigma(t) ** 2
         grads = torch.autograd.grad(sigma_sqr.sum(), t)[0]
         return torch.sqrt(grads)
-
 
     def sample(self, ts, n_samples=1):
         """sample uses the inverse cdf to sample an angle of rotation from
@@ -414,10 +406,10 @@ class IGSO3():
         Returns:
         sampled angles of rotation. [len(ts), N]
         """
-        assert sum(ts==0) == 0, "assumes one-indexed, not zero indexed"
+        assert sum(ts == 0) == 0, "assumes one-indexed, not zero indexed"
         all_samples = []
         for t in ts:
-            sigma_idx = self.t_to_idx(t) 
+            sigma_idx = self.t_to_idx(t)
             sample_i = np.interp(
                 np.random.rand(n_samples),
                 self.igso3_vals['cdf'][sigma_idx],
@@ -445,10 +437,10 @@ class IGSO3():
         """
         sigma_idx = self.t_to_idx(t)
         score_norm_t = np.interp(
-                omega,
-                self.igso3_vals['discrete_omega'],
-                self.igso3_vals['score_norm'][sigma_idx]
-                )
+            omega,
+            self.igso3_vals['discrete_omega'],
+            self.igso3_vals['score_norm'][sigma_idx]
+        )
         return score_norm_t
 
     def score_vec(self, ts, vec):
@@ -465,7 +457,7 @@ class IGSO3():
         all_score_norm = []
         for i, t in enumerate(ts):
             omega_t = omega[i]
-            t_idx = t-1 
+            t_idx = t - 1
             sigma_idx = self.t_to_idx(t)
             score_norm_t = np.interp(
                 omega_t,
@@ -483,7 +475,8 @@ class IGSO3():
         sigma_idcs = [self.t_to_idx(t) for t in ts]
         return self.igso3_vals['exp_score_norms'][sigma_idcs]
 
-    def diffuse_frames(self, xyz, t_list, diffusion_mask=None):
+    def diffuse_frames(self, xyz: torch.Tensor | np.ndarray, t_list: torch.Tensor | np.ndarray, diffusion_mask=None) -> \
+    tuple[np.ndarray, np.ndarray]:
         """
         Perform spherical linear interpolation from the True coordinate frame for each
         residue to a randomly sampled coordinate frame
@@ -498,15 +491,15 @@ class IGSO3():
         if torch.is_tensor(xyz):
             xyz = xyz.numpy()
 
-        t = np.arange(self.T)+1 # 1-indexed!! 
+        t = np.arange(self.T) + 1  # 1-indexed!!
         num_res = len(xyz)
 
-        N  = torch.from_numpy(  xyz[None,:,0,:]  )
-        Ca = torch.from_numpy(  xyz[None,:,1,:]  )  # [1, num_res, 3, 3]
-        C  = torch.from_numpy(  xyz[None,:,2,:]  )
+        N = torch.from_numpy(xyz[None, :, 0, :])
+        Ca = torch.from_numpy(xyz[None, :, 1, :])  # [1, num_res, 3, 3]
+        C = torch.from_numpy(xyz[None, :, 2, :])
 
         # scipy rotation object for true coordinates
-        R_true, Ca = rigid_from_3_points(N,Ca,C)
+        R_true, Ca = rigid_from_3_points(N, Ca, C)
         R_true = R_true[0]
         Ca = Ca[0]
 
@@ -523,21 +516,20 @@ class IGSO3():
         # Apply sampled rot.
         R_sampled = scipy_R.from_rotvec(
             sampled_rots.reshape(-1, 3)).as_matrix().reshape(
-                self.T, num_res, 3, 3)
+            self.T, num_res, 3, 3)
         R_perturbed = np.einsum(
             'tnij,njk->tnik', R_sampled, R_true)
         perturbed_crds = np.einsum(
             'tnij,naj->tnai',
             R_sampled,
-            xyz[:,:3,:] - Ca[:,None,...].numpy()) + Ca[None, :, None].numpy()
+            xyz[:, :3, :] - Ca[:, None, ...].numpy()) + Ca[None, :, None].numpy()
 
         if t_list != None:
-            idx = [i-1 for i in t_list]
+            idx = [i - 1 for i in t_list]
             perturbed_crds = perturbed_crds[idx]
-            R_perturbed    = R_perturbed[idx]
+            R_perturbed = R_perturbed[idx]
 
-
-        return (perturbed_crds.transpose(1, 0, 2, 3),   # [L, T, 3, 3]
+        return (perturbed_crds.transpose(1, 0, 2, 3),  # [L, T, 3, 3]
                 R_perturbed.transpose(1, 0, 2, 3))
 
     def reverse_sample(self, r_t, r_0, t, noise_level, mask=None):
@@ -597,10 +589,10 @@ class IGSO3():
         # implicitly provides a roughly linear scaling in the size of the 
         # update of the  rotation with the distance of r_0 to 
         omega = torch.linalg.norm(r_0t_rotvec).numpy()
-        score_approx = r_0t_rotvec*self.score_norm(t, omega)/omega  
+        score_approx = r_0t_rotvec * self.score_norm(t, omega) / omega
 
         # Compute scaling for score and sampled noise (following Eq 6 of [2])
-        continuous_t = t/self.T
+        continuous_t = t / self.T
         rot_g = self.g(continuous_t).to(score_approx.device)
 
         # Sample and scale noise to add to the rotation perturbation in the
@@ -611,16 +603,16 @@ class IGSO3():
         z = np.random.normal(size=(3))
         z = torch.Tensor(
             z.reshape(3)).to(score_approx.device)
-        z *= noise_level # scale down added noise by noise_level
+        z *= noise_level  # scale down added noise by noise_level
 
         # sample perturbation from discretized SDE (following eq. 6 of [2])
         perturb_rotvec = (rot_g ** 2) * self.step_size * score_approx + rot_g * np.sqrt(self.step_size) * z
 
         # Mask perturbation if residue is masked
-        if mask is not None: perturb_rotvec *= (1-mask.long())
+        if mask is not None: perturb_rotvec *= (1 - mask.long())
         # Convert perturbation to a rotation matrix and apply to r_t
         perturb = rotation_conversions.axis_angle_to_matrix(perturb_rotvec)
-        interp_rot = torch.einsum('ij,jk->ik', perturb, r_t) # interp_rot represents the sampled r_t-1
+        interp_rot = torch.einsum('ij,jk->ik', perturb, r_t)  # interp_rot represents the sampled r_t-1
         return interp_rot
 
 
@@ -632,7 +624,7 @@ class SLERP():
 
     def __init__(self, T):
 
-        self.T = T 
+        self.T = T
 
     def diffuse_frames(self, xyz, t_list, diffusion_mask=None):
         # slerp
@@ -640,12 +632,12 @@ class SLERP():
 
         # filter 
         if t_list != None:
-            t_idx = [t-1 for t in t_list]
-            slerped_crds   = slerped_crds[:,t_idx]
-            slerped_frames = slerped_frames[:,t_idx]
+            t_idx = [t - 1 for t in t_list]
+            slerped_crds = slerped_crds[:, t_idx]
+            slerped_frames = slerped_frames[:, t_idx]
 
-        return slerped_crds, slerped_frames 
-    
+        return slerped_crds, slerped_frames
+
     def slerp(self, xyz, diffusion_mask=None):
         """
         Perform spherical linear interpolation from the True coordinate frame for each 
@@ -666,18 +658,18 @@ class SLERP():
             xyz = xyz.numpy()
 
         t = np.arange(self.T)
-        alpha = t/self.T
-        
+        alpha = t / self.T
+
         R_rand = scipy_R.random(len(xyz))
-        
-        N  = torch.from_numpy(  xyz[None,:,0,:]  )
-        Ca = torch.from_numpy(  xyz[None,:,1,:]  )
-        C  = torch.from_numpy(  xyz[None,:,2,:]  )
-        
+
+        N = torch.from_numpy(xyz[None, :, 0, :])
+        Ca = torch.from_numpy(xyz[None, :, 1, :])
+        C = torch.from_numpy(xyz[None, :, 2, :])
+
         # scipy rotation object for true coordinates
-        R_true, Ca = rigid_from_3_points(N,Ca,C)
+        R_true, Ca = rigid_from_3_points(N, Ca, C)
         R_true = scipy_R.from_matrix(R_true.squeeze())
-        
+
         # bad - could certainly vectorize somehow 
         all_interps = []
         for i in range(len(xyz)):
@@ -687,7 +679,7 @@ class SLERP():
 
             # handle potential nans in BB frames / crds 
             if not np.isnan(r_true).any():
-            
+
                 if not diffusion_mask[i]:
                     key_rots = scipy_R.from_matrix(np.stack([r_true, r_rand], axis=0))
                 else:
@@ -695,27 +687,29 @@ class SLERP():
 
             else:
                 key_rots = scipy_R.from_matrix(np.stack([np.eye(3), np.eye(3)], axis=0))
-        
-            key_times = [0,1]
-        
+
+            key_times = [0, 1]
+
             interpolator = Slerp(key_times, key_rots)
             interp_time = alpha
-            
+
             # grab the interpolated FRAMES 
-            interp_frame  = interpolator(interp_time)
-            
+            interp_frame = interpolator(interp_time)
+
             # construct the rotation matrix which when applied YIELDS interpolated frames 
-            interp_rot = (interp_frame.as_matrix().squeeze() @ np.linalg.inv(r_true.squeeze()) )[None,...]
+            interp_rot = (interp_frame.as_matrix().squeeze() @ np.linalg.inv(r_true.squeeze()))[None, ...]
 
             all_interps.append(interp_rot)
-        
+
         all_interps = np.concatenate(all_interps, axis=0)
-        
+
         # Now apply all the interpolated rotation matrices to the original rotation matrices and get the frames at each timestep
         slerped_frames = np.einsum('lrij,ljk->lrik', all_interps, R_true.as_matrix())
-        
+
         # apply the slerped frames to the coordinates
-        slerped_crds   = np.einsum('lrij,laj->lrai', all_interps, xyz[:,:3,:] - Ca.squeeze()[:,None,...].numpy()) + Ca.squeeze()[:,None,None,...].numpy()
+        slerped_crds = np.einsum('lrij,laj->lrai', all_interps,
+                                 xyz[:, :3, :] - Ca.squeeze()[:, None, ...].numpy()) + Ca.squeeze()[:, None, None,
+                                                                                       ...].numpy()
 
         # (T,L,3,3) set of backbone coordinates and frames 
         return slerped_crds, slerped_frames
@@ -724,9 +718,8 @@ class SLERP():
 class Diffuser():
     # wrapper for yielding diffused coordinates/frames/rotamers  
 
-
     def __init__(self,
-                 T,
+                 T: int,
                  b_0,
                  b_T,
                  min_sigma,
@@ -759,14 +752,14 @@ class Diffuser():
         self.max_sigma = max_sigma
         self.crd_scale = crd_scale
         self.var_scale = var_scale
-        self.aa_decode_steps=aa_decode_steps
+        self.aa_decode_steps = aa_decode_steps
         self.cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cached_schedules')
 
         # get backbone frame diffuser 
         if so3_type == 'slerp':
-            self.so3_diffuser =  SLERP(self.T)
+            self.so3_diffuser = SLERP(self.T)
         elif so3_type == 'igso3':
-            self.so3_diffuser =  IGSO3(
+            self.so3_diffuser = IGSO3(
                 T=self.T,
                 min_sigma=self.min_sigma,
                 max_sigma=self.max_sigma,
@@ -774,15 +767,17 @@ class Diffuser():
                 min_b=min_b,
                 max_b=max_b,
                 cache_dir=self.cache_dir,
-                L=truncation_level, 
-            )        
+                L=truncation_level,
+            )
         else:
             raise NotImplementedError()
 
         # get backbone translation diffuser
         self.eucl_diffuser = EuclideanDiffuser(self.T, b_0, b_T, schedule_type=schedule_type, **schedule_kwargs)
 
-    def diffuse_pose(self, xyz, seq, atom_mask, is_sm, diffuse_sidechains=False, include_motif_sidechains=True, diffusion_mask=None, t_list=None):
+    def diffuse_pose(self, xyz: torch.Tensor, seq: torch.Tensor, atom_mask: torch.Tensor, is_sm,
+                     diffuse_sidechains=False, include_motif_sidechains=True,
+                     diffusion_mask=None, t_list=None) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Given full atom xyz, sequence and atom mask, diffuse the protein 
         translations, rotations, and chi angles
@@ -810,101 +805,98 @@ class Diffuser():
 
         # bring to origin and scale 
         # check if any BB atoms are nan before centering 
-        nan_mask = ~torch.isnan(xyz.squeeze()[:,1:2]).any(dim=-1).any(dim=-1)
+        nan_mask = ~torch.isnan(xyz.squeeze()[:, 1:2]).any(dim=-1).any(dim=-1)
         assert torch.sum(~nan_mask) == 0
 
         #Centre unmasked structure at origin, as in training (to prevent information leak)
         if torch.sum(diffusion_mask) != 0:
-            self.motif_com=xyz[diffusion_mask,1,:].mean(dim=0) # This is needed for one of the potentials
+            self.motif_com = xyz[diffusion_mask, 1, :].mean(dim=0)  # This is needed for one of the potentials
             xyz = xyz - self.motif_com
         elif torch.sum(diffusion_mask) == 0:
-            xyz = xyz - xyz[:,1,:].mean(dim=0)
+            xyz = xyz - xyz[:, 1, :].mean(dim=0)
 
         #xyz = xyz - xyz[nan_mask][:,1,:].mean(dim=0) # DJ aug 23, 2022 - commenting out bc now better logic to assert no nans 
         xyz_true = torch.clone(xyz)
 
         xyz = xyz * self.crd_scale
 
-        
-        # 1 get translations 
+        # 1 get translations
         tick = time.time()
-        diffused_T, deltas = self.eucl_diffuser.diffuse_translations(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask)
+        diffused_T, deltas = self.eucl_diffuser.diffuse_translations(xyz[:, :3, :].clone(),
+                                                                     diffusion_mask=diffusion_mask)
         #print('Time to diffuse coordinates: ',time.time()-tick)
         diffused_T /= self.crd_scale
-        deltas     /= self.crd_scale
-
+        deltas /= self.crd_scale
 
         # 2 get  frames
         is_motif = diffusion_mask
         # assert is_motif[is_sm].all(), 'small molecules are not currently diffused, needs checking'
         tick = time.time()
 
-        diffused_frame_crds, diffused_frames = self.so3_diffuser.diffuse_frames(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask.numpy(), t_list=None)
-        diffused_frame_crds /= self.crd_scale 
+        diffused_frame_crds, diffused_frames = self.so3_diffuser.diffuse_frames(xyz[:, :3, :].clone(),
+                                                                                diffusion_mask=diffusion_mask.numpy(),
+                                                                                t_list=None)
+        diffused_frame_crds /= self.crd_scale
         #print('Time to diffuse frames: ',time.time()-tick)
 
-
-        ##### Now combine all the diffused quantities to make full atom diffused poses 
+        ##### Now combine all the diffused quantities to make full atom diffused poses
         tick = time.time()
         cum_delta = deltas.cumsum(dim=1)
         # The coordinates of the translated AND rotated frames
-        diffused_BB = (torch.from_numpy(diffused_frame_crds) + cum_delta[:,:,None,:]).transpose(0,1) # [n,L,3,3]
+        diffused_BB = (torch.from_numpy(diffused_frame_crds) + cum_delta[:, :, None, :]).transpose(0, 1)  # [n,L,3,3]
         #diffused_BB  = torch.from_numpy(diffused_frame_crds).transpose(0,1)
 
         # Full atom diffusions at all timepoints 
         if diffuse_sidechains:
             # This section of code only works with integer sequence at the moment - NRB
-            assert(seq.shape[-1] == L), 'Tried to feed non-integer sequence to diffuse torsions'
+            assert (seq.shape[-1] == L), 'Tried to feed non-integer sequence to diffuse torsions'
 
             # diffuse chi angles/planar angles and sequence information 
             tick = time.time()
-            diffused_torsions,aa_masks = self.torsion_diffuser.diffuse_torsions(xyz[:,:14].clone(), 
-                                                                                seq, 
-                                                                                atom_mask[:,:14].clone(),
-                                                                                diffusion_mask=diffusion_mask, 
-                                                                                n_steps=self.aa_decode_steps)
+            diffused_torsions, aa_masks = self.torsion_diffuser.diffuse_torsions(xyz[:, :14].clone(),
+                                                                                 seq,
+                                                                                 atom_mask[:, :14].clone(),
+                                                                                 diffusion_mask=diffusion_mask,
+                                                                                 n_steps=self.aa_decode_steps)
             #print('Time to diffuse torsions: ',time.time()-tick)
 
-            diffused_torsions_trig = torch.stack([torch.cos(diffused_torsions), 
-                                              torch.sin(diffused_torsions)], dim=-1)
+            diffused_torsions_trig = torch.stack([torch.cos(diffused_torsions),
+                                                  torch.sin(diffused_torsions)], dim=-1)
             fa_stack = []
             if t_list is None:
-                for t,alphas_t in enumerate(diffused_torsions_trig.transpose(0,1)):
-                    xyz_bb_t = diffused_BB[t,:,:3]
+                for t, alphas_t in enumerate(diffused_torsions_trig.transpose(0, 1)):
+                    xyz_bb_t = diffused_BB[t, :, :3]
 
-                    _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                    _, fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
                     fa_stack.append(fullatom_t)
 
             else:
                 for t in t_list:
-                    t_idx=t-1
-                    xyz_bb_t  = diffused_BB[t_idx,:,:3]
-                    alphas_t = diffused_torsions_trig.transpose(0,1)[t_idx]
+                    t_idx = t - 1
+                    xyz_bb_t = diffused_BB[t_idx, :, :3]
+                    alphas_t = diffused_torsions_trig.transpose(0, 1)[t_idx]
 
-                    _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                    _, fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
                     fa_stack.append(fullatom_t.squeeze())
 
             fa_stack = torch.stack(fa_stack, dim=0)
 
         else:
             # diffused_BB is [t_steps,L,3,3]
-            t_steps, L  = diffused_BB.shape[:2]
+            t_steps, L = diffused_BB.shape[:2]
 
-            diffused_fa = torch.zeros(t_steps,L,ChemData().NTOTAL,3)
+            diffused_fa = torch.zeros(t_steps, L, ChemData().NTOTAL, 3)
             diffused_BB = diffused_BB.float()
-            diffused_fa[:,:,:3,:] = diffused_BB
+            diffused_fa[:, :, :3, :] = diffused_BB
 
             # Add in sidechains from motif
             if include_motif_sidechains:
-                diffused_fa[:,diffusion_mask,:14,:] = xyz_true[None,diffusion_mask,:14]
+                diffused_fa[:, diffusion_mask, :14, :] = xyz_true[None, diffusion_mask, :14]
 
-            if t_list is None: fa_stack = diffused_fa
+            if t_list is None:
+                fa_stack = diffused_fa
             else:
-                t_idx_list = [t-1 for t in t_list]
+                t_idx_list = [t - 1 for t in t_list]
                 fa_stack = diffused_fa[t_idx_list]
 
         return fa_stack, xyz_true
-        #return diffused_T, deltas, diffused_frame_crds, diffused_frames, diffused_torsions, fa_stack, aa_masks
-
-
-

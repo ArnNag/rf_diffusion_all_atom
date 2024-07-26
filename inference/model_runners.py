@@ -11,7 +11,7 @@ import rf2aa.util
 from rf2aa.util_module import XYZConverter
 import rf2aa.tensor_util
 import aa_model
-from aa_model import Indep, RFO
+from aa_model import Indep, OutputFeatures
 
 from diffusion import Diffuser
 from contigs import ContigMap
@@ -23,13 +23,15 @@ from hydra.core.hydra_config import HydraConfig
 from rf2aa.model import RoseTTAFoldModel
 
 import sys
-sys.path.append('../') # to access RF structure prediction stuff 
+
+sys.path.append('../')  # to access RF structure prediction stuff
 
 from rf2aa.model import RoseTTAFoldModel
 
-TOR_INDICES  = util.torsion_indices
+TOR_INDICES = util.torsion_indices
 TOR_CAN_FLIP = util.torsion_can_flip
-REF_ANGLES   = util.reference_angles
+REF_ANGLES = util.reference_angles
+
 
 class Sampler:
 
@@ -40,7 +42,7 @@ class Sampler:
         """
         self.initialized = False
         self.initialize(conf)
-    
+
     def initialize(self, conf: DictConfig):
         self._log = logging.getLogger(__name__)
         if torch.cuda.is_available():
@@ -64,7 +66,7 @@ class Sampler:
         else:
             self.assemble_config_from_chk()
 
-        self.initialized=True
+        self.initialized = True
 
         # Initialize helper objects
         self.inf_conf = self._conf.inference
@@ -92,17 +94,18 @@ class Sampler:
         if self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs:
             self.ppi_conf.binderlen = ''.join(chain_idx[0] for chain_idx in self.target_feats['pdb_idx']).index('B')
 
-        self.potential_manager = PotentialManager(self.potential_conf, 
-                                                  self.ppi_conf, 
-                                                  self.diffuser_conf, 
+        self.potential_manager = PotentialManager(self.potential_conf,
+                                                  self.ppi_conf,
+                                                  self.diffuser_conf,
                                                   self.inf_conf)
-        
+
         # Get recycle schedule    
         recycle_schedule = str(self.inf_conf.recycle_schedule) if self.inf_conf.recycle_schedule is not None else None
         self.recycle_schedule = iu.recycle_schedule(self.T, recycle_schedule, self.inf_conf.num_recycles)
 
     def process_target(self, pdb_path):
-        assert not (self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs), "target reprocessing not implemented yet for these configuration arguments"
+        assert not (
+                self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs), "target reprocessing not implemented yet for these configuration arguments"
         self.target_feats = iu.process_target(self.inf_conf.input_pdb)
         self.chain_idx = None
 
@@ -116,24 +119,24 @@ class Sampler:
                 T (int): The maximum number of timesteps to perform
         '''
         return self.diffuser_conf.T
-    
+
     def load_checkpoint(self) -> None:
         """Loads RF checkpoint, from which config can be generated."""
         self._log.info(f'Reading checkpoint from {self.ckpt_path}')
         print(f'loading {self.ckpt_path}')
-        self.ckpt  = torch.load(
+        self.ckpt = torch.load(
             self.ckpt_path, map_location=self.device)
         print(f'loaded {self.ckpt_path}')
 
     def assemble_config_from_chk(self) -> None:
-        
+
         # get overrides to re-apply after building the config from the checkpoint
         overrides = []
         if HydraConfig.initialized():
             overrides = HydraConfig.get().overrides.task
         if 'config_dict' in self.ckpt.keys():
             # First, check all flags in the checkpoint config dict are in the config file
-            for cat in ['model','diffuser','seq_diffuser','preprocess']:
+            for cat in ['model', 'diffuser', 'seq_diffuser', 'preprocess']:
                 for key in self._conf[cat]:
                     if key == 'chi_type' and self.ckpt['config_dict'][cat][key] == 'circular':
                         continue
@@ -143,12 +146,15 @@ class Sampler:
                         pass
             # add back in overrides again
             for override in overrides:
-                if override.split(".")[0] in ['model','diffuser','seq_diffuser','preprocess']:
-                    print(f'OVERRIDING: You are changing {override.split("=")[0]} from the value this model was trained with.')
+                if override.split(".")[0] in ['model', 'diffuser', 'seq_diffuser', 'preprocess']:
+                    print(
+                        f'OVERRIDING: You are changing {override.split("=")[0]} from the value this model was trained with.')
                     mytype = type(self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]])
-                    self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(override.split("=")[1])
+                    self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(
+                        override.split("=")[1])
         else:
-            print('WARNING: Model, Diffuser and Preprocess parameters are not saved in this checkpoint. Check carefully that the values specified in the config are correct for this checkpoint')       
+            print(
+                'WARNING: Model, Diffuser and Preprocess parameters are not saved in this checkpoint. Check carefully that the values specified in the config are correct for this checkpoint')
 
     def load_model(self):
         """Create RosettaFold model from preloaded checkpoint."""
@@ -196,12 +202,12 @@ class Sampler:
             ljlk_parameters=self.ljlk_parameters,
             lj_correction_parameters=self.lj_correction_parameters,
             num_bonds=self.num_bonds,
-            cb_len = self.cb_len,
-            cb_ang = self.cb_ang,
-            cb_tor = self.cb_tor,
+            cb_len=self.cb_len,
+            cb_ang=self.cb_ang,
+            cb_tor=self.cb_tor,
             assert_single_sequence_input=True,
-            ).to(self.device)
-        
+        ).to(self.device)
+
         model = model.eval()
         self._log.info(f'Loading checkpoint.')
         if not self._conf.inference.zero_weights:
@@ -212,7 +218,7 @@ class Sampler:
         """Create contig from target features."""
         if self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs:
             seq_len = target_feats['seq'].shape[0]
-            self.contig_conf.contigs = [f'{self.ppi_conf.binderlen}',f'B{self.ppi_conf.binderlen+1}-{seq_len}']
+            self.contig_conf.contigs = [f'{self.ppi_conf.binderlen}', f'B{self.ppi_conf.binderlen + 1}-{seq_len}']
         self._log.info(f'Using contig: {self.contig_conf.contigs}')
         # self.contig_conf.contigs = ['']
         if self.contig_conf.contigs == 'whole':
@@ -235,7 +241,7 @@ class Sampler:
         })
         return iu.Denoise(**denoise_kwargs)
 
-    def sample_init(self, return_forward_trajectory=False):
+    def sample_init(self, return_forward_trajectory=False) -> Indep:
         """Creates initial features to start the sampling process."""
 
         # moved this here as should be updated each iteration of diffusion
@@ -247,16 +253,18 @@ class Sampler:
         self.t_step_input = self._conf.diffuser.T
         if self.diffuser_conf.partial_T:
             mappings = self.contig_map.get_mappings()
-            assert indep.xyz.shape[0] ==  L + torch.sum(indep.is_sm), f"there must be a coordinate in the input PDB for each residue implied by the contig string for partial diffusion.  length of input PDB != length of contig string: {indep.xyz.shape[0]} != {L+torch.sum(indep.is_sm)}"
+            assert indep.xyz.shape[0] == L + torch.sum(
+                indep.is_sm), f"there must be a coordinate in the input PDB for each residue implied by the contig string for partial diffusion.  length of input PDB != length of contig string: {indep.xyz.shape[0]} != {L + torch.sum(indep.is_sm)}"
             assert torch.all(self.is_diffused[indep.is_sm] == 0), f"all ligand atoms must be in the motif"
-            assert (mappings['con_hal_idx0'] == mappings['con_ref_idx0']).all(), 'all positions in the input PDB must correspond to the same index in the output pdb'
+            assert (mappings['con_hal_idx0'] == mappings[
+                'con_ref_idx0']).all(), 'all positions in the input PDB must correspond to the same index in the output pdb'
             indep = indep_orig
         indep.seq[self.is_seq_masked] = ChemData().MASKINDEX
         # Diffuse the contig-mapped coordinates 
         if self.diffuser_conf.partial_T:
             self.t_step_input = self.diffuser_conf.partial_T
             assert self.diffuser_conf.partial_T <= self.diffuser_conf.T
-        t_list = np.arange(1, self.t_step_input+1)
+        t_list = np.arange(1, self.t_step_input + 1)
         atom_mask = None
         seq_one_hot = None
         fa_stack, xyz_true = self.diffuser.diffuse_pose(
@@ -269,24 +277,26 @@ class Sampler:
             diffuse_sidechains=self.preprocess_conf.sidechain_input,
             include_motif_sidechains=self.preprocess_conf.motif_sidechain_input)
 
-        xT = fa_stack[-1].squeeze()[:,:14,:]
+        xT = fa_stack[-1].squeeze()[:, :14, :]
         xt = torch.clone(xT)
         indep.xyz = xt
 
         self.denoiser = self.construct_denoiser(len(self.contig_map.ref), visible=~self.is_diffused)
-        
+
         self.msa_prev = None
         self.pair_prev = None
         self.state_prev = None
-        
+
         return indep
+
 
 class NRBStyleSelfCond(Sampler):
     """
     Model Runner for self conditioning in the style attempted by NRB
     """
 
-    def sample_step(self, t, indep: Indep, rfo: RFO):
+    def sample_step(self, t, indep: Indep, rfo: OutputFeatures) -> tuple[
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, None, OutputFeatures]:
         '''
         Generate the next pose that the model should be supplied at timestep t-1.
         '''
@@ -294,7 +304,7 @@ class NRBStyleSelfCond(Sampler):
         rfi = self.model_adaptor.prepro(indep, t, self.is_diffused)
         rf2aa.tensor_util.to_device(rfi, self.device)
         seq_init = torch.nn.functional.one_hot(
-                indep.seq, num_classes=ChemData().NAATOKENS).to(self.device).float()
+            indep.seq, num_classes=ChemData().NAATOKENS).to(self.device).float()
         seq_t = torch.clone(seq_init)
 
         # Self conditioning
@@ -304,30 +314,30 @@ class NRBStyleSelfCond(Sampler):
         with torch.no_grad():
             with reset_and_increment_numpy_rng(1):
                 rfo = self.model_adaptor.forward(
-                                    rfi,
-                                    return_infer=True,
-                                    )
+                    rfi,
+                    return_infer=True,
+                )
 
-        px0 = rfo.get_xyz()[:,:14]
+        px0 = rfo.get_xyz()[:, :14]
         logits = rfo.get_seq_logits()
 
         # Default method of decoding sequence
-        seq_probs   = torch.nn.Softmax(dim=-1)(logits.squeeze()/self.inf_conf.softmax_T)
-        sampled_seq = torch.multinomial(seq_probs, 1).squeeze() # sample a single value from each position
+        seq_probs = torch.nn.Softmax(dim=-1)(logits.squeeze() / self.inf_conf.softmax_T)
+        sampled_seq = torch.multinomial(seq_probs, 1).squeeze()  # sample a single value from each position
 
         pseq_0 = torch.nn.functional.one_hot(
             sampled_seq, num_classes=ChemData().NAATOKENS).to(self.device).float()
-        
-        pseq_0[~self.is_seq_masked] = seq_init[~self.is_seq_masked].to(self.device) # [L,22]
+
+        pseq_0[~self.is_seq_masked] = seq_init[~self.is_seq_masked].to(self.device)  # [L,22]
 
         now = datetime.now()
         current_time = now.strftime("%H:%M:%S")
         self._log.info(
-                f'{current_time}: Timestep {t}, current sequence: { ChemData().seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
+            f'{current_time}: Timestep {t}, current sequence: {ChemData().seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
 
         if t > self._conf.inference.final_step:
             x_t_1, seq_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
-                xt=rfi.xyz[0,:,:14].cpu(),
+                xt=rfi.xyz[0, :, :14].cpu(),
                 px0=px0,
                 t=t,
                 diffusion_mask=~self.is_diffused,
@@ -354,12 +364,14 @@ class NRBStyleSelfCond(Sampler):
 
         return px0, x_t_1, seq_t_1, tors_t_1, None, rfo
 
-def sampler_selector(conf: DictConfig):
+
+def sampler_selector(conf: DictConfig) -> NRBStyleSelfCond:
     if conf.inference.model_runner == 'NRBStyleSelfCond':
         sampler = NRBStyleSelfCond(conf)
     else:
         raise ValueError(f'Unrecognized sampler {conf.model_runner}')
     return sampler
+
 
 @contextmanager
 def reset_and_increment_numpy_rng(n):

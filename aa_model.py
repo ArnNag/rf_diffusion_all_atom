@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import assertpy
@@ -8,6 +8,8 @@ import dataclasses
 from icecream import ic
 from assertpy import assert_that
 from omegaconf import OmegaConf, DictConfig
+from torch import Tensor
+
 import rf2aa.util
 from dataclasses import dataclass
 
@@ -95,7 +97,7 @@ class Indep:
 
 
 @dataclass
-class RFI:
+class InputFeatures:
     msa_latent: torch.Tensor
     msa_full: torch.Tensor
     seq: torch.Tensor
@@ -120,7 +122,7 @@ class RFI:
 
 
 @dataclass
-class RFO:
+class OutputFeatures:
     logits: torch.Tensor  # ([1, 61, L, L], [1, 61, L, L], [1, 37, L, L], [1, 19, L, L])
     logits_aa: torch.Tensor  # [1, 80, 115]
     logits_pae: torch.Tensor  # [1, 64, L, L]
@@ -175,7 +177,7 @@ def filter_het(pdb_lines, ligand):
     return lines
 
 
-def make_indep(pdb, ligand=None, center=True):
+def make_indep(pdb: str, ligand: Optional[str] = None, center: bool = True) -> Indep:
     chirals = torch.Tensor()
     atom_frames = torch.zeros((0, 3, 2))
 
@@ -265,12 +267,12 @@ class Model:
         self.atomizer = None
         self.converter = XYZConverter()
 
-    def forward(self, rfi: RFI, **kwargs):
+    def forward(self, rfi: InputFeatures, **kwargs) -> OutputFeatures:
         rfi_dict = dataclasses.asdict(rfi)
         a = self.model(**{**rfi_dict, **kwargs})
-        return RFO(*a)
+        return OutputFeatures(*a)
 
-    def insert_contig(self, indep: Indep, contig_map: ContigMap, partial_T=False):
+    def insert_contig(self, indep: Indep, contig_map: ContigMap, partial_T=False) -> tuple[Indep, Tensor, Tensor]:
         o = copy.deepcopy(indep)
 
         # Insert small mol into contig_map
@@ -336,7 +338,7 @@ class Model:
 
         return o, is_diffused, is_diffused
 
-    def prepro(self, indep: Indep, t, is_diffused):
+    def prepro(self, indep: Indep, t, is_diffused) -> InputFeatures:
         """
         Function to prepare inputs to diffusion model.
 
@@ -433,7 +435,7 @@ class Model:
             msa_full[..., -2:] = 0
 
         # Note: should be batched
-        rfi = RFI(
+        rfi = InputFeatures(
             msa_masked,
             msa_full,
             indep.seq[None],
@@ -458,7 +460,7 @@ class Model:
         return rfi
 
 
-def assert_has_coords(xyz, indep: Indep):
+def assert_has_coords(xyz, indep: Indep) -> None:
     assert len(xyz.shape) == 3
     missing_backbone = torch.isnan(xyz).any(dim=-1)[..., :3].any(dim=-1)
     prot_missing_bb = missing_backbone[~indep.is_sm]
@@ -472,14 +474,14 @@ def assert_has_coords(xyz, indep: Indep):
         ipdb.set_trace()
 
 
-def pad_dim(x, dim, new_l, value=0):
+def pad_dim(x, dim, new_l, value=0) -> Tensor:
     padding = [0] * 2 * x.ndim
     padding[2 * dim] = new_l - x.shape[dim]
     padding = padding[::-1]
     return F.pad(x, pad=tuple(padding), value=value)
 
 
-def write_traj(path, xyz_stack, seq, bond_feats, natoms=23, **kwargs):
+def write_traj(path, xyz_stack, seq, bond_feats, natoms=23, **kwargs) -> None:
     xyz23 = pad_dim(xyz_stack, 2, natoms)
     if bond_feats is not None:
         bond_feats = bond_feats[None]
@@ -488,16 +490,16 @@ def write_traj(path, xyz_stack, seq, bond_feats, natoms=23, **kwargs):
             rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats, modelnum=i, **kwargs)
 
 
-def forward(model, rfi: RFI, **kwargs):
+def forward(model, rfi: InputFeatures, **kwargs) -> OutputFeatures:
     rfi_dict = dataclasses.asdict(rfi)
-    return RFO(*model(**{**rfi_dict, **kwargs}))
+    return OutputFeatures(*model(**{**rfi_dict, **kwargs}))
 
 
-def mask_indep(indep: Indep, is_diffused):
+def mask_indep(indep: Indep, is_diffused) -> None:
     indep.seq[is_diffused] = ChemData().MASKINDEX
 
 
-def self_cond(indep: Indep, rfi: RFI, rfo: RFO):
+def self_cond(indep: Indep, rfi: InputFeatures, rfo: OutputFeatures) -> InputFeatures:
     # RFI is already batched
     B = 1
     L = indep.xyz.shape[0]
@@ -512,7 +514,7 @@ def self_cond(indep: Indep, rfi: RFI, rfo: RFO):
     return rfi_sc
 
 
-def hetatm_names(pdb):
+def hetatm_names(pdb: str) -> defaultdict[str, list[tuple[str, str]]]:
     d = defaultdict(list)
     with open(pdb) as f:
         for line in f.readlines():
@@ -524,7 +526,7 @@ def hetatm_names(pdb):
     return d
 
 
-def without_H(atom_elem_by_lig):
+def without_H(atom_elem_by_lig: defaultdict[str, list[str]]) -> dict[str, list[tuple[str, str]]]:
     ''' Drops Hs from a dictionary like {'LG1': [('CB', 'C'), ('H2', 'H')]}'''
     out = {}
     for lig, atom_names in atom_elem_by_lig.items():
@@ -532,7 +534,7 @@ def without_H(atom_elem_by_lig):
     return out
 
 
-def rename_ligand_atoms(ref_fn, out_fn):
+def rename_ligand_atoms(ref_fn: str, out_fn: str) -> None:
     """Copies names of ligand residue and ligand heavy atoms from input pdb
     into output (design) pdb."""
 
