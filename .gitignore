@@ -5,3 +5,5 @@
 *.yaml
 *.pkl
 *.pyc
+*.xml
+*.iml
