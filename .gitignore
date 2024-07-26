@@ -1,0 +1,7 @@
+
+*.sif
+*.pt
+*.log
+*.yaml
+*.pkl
+*.pyc
