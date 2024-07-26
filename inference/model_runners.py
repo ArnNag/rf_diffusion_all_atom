@@ -11,6 +11,7 @@ import rf2aa.util
 from rf2aa.util_module import XYZConverter
 import rf2aa.tensor_util
 import aa_model
+from aa_model import Indep, RFO
 
 from diffusion import Diffuser
 from contigs import ContigMap
@@ -285,7 +286,7 @@ class NRBStyleSelfCond(Sampler):
     Model Runner for self conditioning in the style attempted by NRB
     """
 
-    def sample_step(self, t, indep, rfo):
+    def sample_step(self, t, indep: Indep, rfo: RFO):
         '''
         Generate the next pose that the model should be supplied at timestep t-1.
         '''
