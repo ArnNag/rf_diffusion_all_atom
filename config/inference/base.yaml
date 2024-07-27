@@ -15,7 +15,6 @@ inference:
   softmax_T: 1e-5
   output_prefix: samples/design
   scaffold_guided: False
-  model_runner: NRBStyleSelfCond
   cautious: True
   recycle_between: False
   align_motif: True

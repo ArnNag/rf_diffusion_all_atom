@@ -290,15 +290,12 @@ class Sampler:
         return indep
 
 
-class NRBStyleSelfCond(Sampler):
-    """
-    Model Runner for self conditioning in the style attempted by NRB
-    """
-
     def sample_step(self, t, indep: Indep, rfo: OutputFeatures) -> tuple[
-        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, None, OutputFeatures]:
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, OutputFeatures]:
         '''
         Generate the next pose that the model should be supplied at timestep t-1.
+        Self-conditioning done in the style of Nathaniel R. Bennett
+        # TODO: add reference
         '''
 
         rfi = self.model_adaptor.prepro(indep, t, self.is_diffused)
@@ -362,15 +359,7 @@ class NRBStyleSelfCond(Sampler):
         x_t_1 = x_t_1.cpu()
         seq_t_1 = seq_t_1.cpu()
 
-        return px0, x_t_1, seq_t_1, tors_t_1, None, rfo
-
-
-def sampler_selector(conf: DictConfig) -> NRBStyleSelfCond:
-    if conf.inference.model_runner == 'NRBStyleSelfCond':
-        sampler = NRBStyleSelfCond(conf)
-    else:
-        raise ValueError(f'Unrecognized sampler {conf.model_runner}')
-    return sampler
+        return px0, x_t_1, seq_t_1, tors_t_1, rfo
 
 
 @contextmanager
