@@ -291,7 +291,7 @@ class Sampler:
 
 
     def sample_step(self, t, indep: Indep, rfo: OutputFeatures) -> tuple[
-        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, None, OutputFeatures]:
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, OutputFeatures]:
         '''
         Generate the next pose that the model should be supplied at timestep t-1.
         Self-conditioning done in the style of Nathaniel R. Bennett
@@ -359,7 +359,7 @@ class Sampler:
         x_t_1 = x_t_1.cpu()
         seq_t_1 = seq_t_1.cpu()
 
-        return px0, x_t_1, seq_t_1, tors_t_1, None, rfo
+        return px0, x_t_1, seq_t_1, tors_t_1, rfo
 
 
 @contextmanager
