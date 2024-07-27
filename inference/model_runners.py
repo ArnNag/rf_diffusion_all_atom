@@ -365,14 +365,6 @@ class NRBStyleSelfCond(Sampler):
         return px0, x_t_1, seq_t_1, tors_t_1, None, rfo
 
 
-def sampler_selector(conf: DictConfig) -> NRBStyleSelfCond:
-    if conf.inference.model_runner == 'NRBStyleSelfCond':
-        sampler = NRBStyleSelfCond(conf)
-    else:
-        raise ValueError(f'Unrecognized sampler {conf.model_runner}')
-    return sampler
-
-
 @contextmanager
 def reset_and_increment_numpy_rng(n):
     state = np.random.get_state()
