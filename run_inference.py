@@ -87,7 +87,7 @@ def main(conf: DictConfig) -> None:
     sample(sampler)
 
 
-def get_sampler(conf: DictConfig) -> NRBStyleSelfCond:
+def get_sampler(conf: DictConfig) -> Sampler:
     if conf.inference.deterministic:
         make_deterministic()
 
@@ -106,7 +106,7 @@ def get_sampler(conf: DictConfig) -> NRBStyleSelfCond:
 
     conf.inference.design_startnum = design_startnum
     # Initialize sampler and target/contig.
-    sampler = NRBStyleSelfCond(conf)
+    sampler = Sampler(conf)
     return sampler
 
 
