@@ -149,7 +149,7 @@ def sample_one(sampler: Sampler, simple_logging=False) -> tuple[Indep, Tensor, T
             if t % 10 == 0:
                 e = t
             print(f'{e}', end='')
-        px0, x_t, seq_t, tors_t, plddt, rfo = sampler.sample_step(
+        px0, x_t, seq_t, tors_t, rfo = sampler.sample_step(
             t, indep, rfo)
         rf2aa.tensor_util.assert_same_shape(indep.xyz, x_t)
         indep.xyz = x_t
