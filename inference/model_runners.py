@@ -20,7 +20,6 @@ from potentials.manager import PotentialManager
 import logging
 import util
 from hydra.core.hydra_config import HydraConfig
-from rf2aa.model import RoseTTAFoldModel
 
 import sys
 
@@ -40,16 +39,11 @@ class Sampler:
         Args:
             conf: Configuration.
         """
-        self.initialized = False
-        self.initialize(conf)
-
-    def initialize(self, conf: DictConfig):
         self._log = logging.getLogger(__name__)
         if torch.cuda.is_available():
             self.device = torch.device('cuda')
         else:
             self.device = torch.device('cpu')
-        needs_model_reload = not self.initialized or conf.inference.ckpt_path != self._conf.inference.ckpt_path
 
         # Assign config to Sampler
         self._conf = conf
@@ -57,27 +51,22 @@ class Sampler:
         # Initialize inference only helper objects to Sampler
         self.ckpt_path = conf.inference.ckpt_path
 
-        if needs_model_reload:
-            # Load checkpoint, so that we can assemble the config
-            self.load_checkpoint()
-            self.assemble_config_from_chk()
-            # Now actually load the model weights into RF
-            self.model = self.load_model()
-        else:
-            self.assemble_config_from_chk()
-
-        self.initialized = True
+        # Load checkpoint, so that we can assemble the config
+        self.load_checkpoint()
+        self.assemble_config_from_chk()
+        # Now actually load the model weights into RF
+        self.model = self.load_model()
 
         # Initialize helper objects
-        self.inf_conf = self._conf.inference
-        self.contig_conf = self._conf.contigmap
-        self.denoiser_conf = self._conf.denoiser
-        self.ppi_conf = self._conf.ppi
-        self.potential_conf = self._conf.potentials
-        self.diffuser_conf = self._conf.diffuser
-        self.preprocess_conf = self._conf.preprocess
-        self.diffuser = Diffuser(**self._conf.diffuser)
-        self.model_adaptor = aa_model.Model(self._conf)
+        self.inf_conf = self.conf.inference
+        self.contig_conf = self.conf.contigmap
+        self.denoiser_conf = self.conf.denoiser
+        self.ppi_conf = self.conf.ppi
+        self.potential_conf = self.conf.potentials
+        self.diffuser_conf = self.conf.diffuser
+        self.preprocess_conf = self.conf.preprocess
+        self.diffuser = Diffuser(**self.conf.diffuser)
+        self.model_adaptor = aa_model.Model(self.conf)
         # Temporary hack
         self.model.assert_single_sequence_input = True
         self.model_adaptor.model = self.model
@@ -86,11 +75,7 @@ class Sampler:
         self.target_feats = iu.process_target(self.inf_conf.input_pdb, parse_hetatom=False, center=False)
         self.chain_idx = None
 
-        if self.diffuser_conf.partial_T:
-            assert self.diffuser_conf.partial_T <= self.diffuser_conf.T
-            self.t_step_input = int(self.diffuser_conf.partial_T)
-        else:
-            self.t_step_input = int(self.diffuser_conf.T)
+        self.t_step_input = int(self.diffuser_conf.T)
         if self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs:
             self.ppi_conf.binderlen = ''.join(chain_idx[0] for chain_idx in self.target_feats['pdb_idx']).index('B')
 
@@ -102,12 +87,6 @@ class Sampler:
         # Get recycle schedule    
         recycle_schedule = str(self.inf_conf.recycle_schedule) if self.inf_conf.recycle_schedule is not None else None
         self.recycle_schedule = iu.recycle_schedule(self.T, recycle_schedule, self.inf_conf.num_recycles)
-
-    def process_target(self, pdb_path):
-        assert not (
-                self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs), "target reprocessing not implemented yet for these configuration arguments"
-        self.target_feats = iu.process_target(self.inf_conf.input_pdb)
-        self.chain_idx = None
 
     @property
     def T(self):
@@ -137,11 +116,11 @@ class Sampler:
         if 'config_dict' in self.ckpt.keys():
             # First, check all flags in the checkpoint config dict are in the config file
             for cat in ['model', 'diffuser', 'seq_diffuser', 'preprocess']:
-                for key in self._conf[cat]:
+                for key in self.conf[cat]:
                     if key == 'chi_type' and self.ckpt['config_dict'][cat][key] == 'circular':
                         continue
                     try:
-                        self._conf[cat][key] = self.ckpt['config_dict'][cat][key]
+                        self.conf[cat][key] = self.ckpt['config_dict'][cat][key]
                     except:
                         pass
             # add back in overrides again
@@ -149,8 +128,8 @@ class Sampler:
                 if override.split(".")[0] in ['model', 'diffuser', 'seq_diffuser', 'preprocess']:
                     print(
                         f'OVERRIDING: You are changing {override.split("=")[0]} from the value this model was trained with.')
-                    mytype = type(self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]])
-                    self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(
+                    mytype = type(self.conf[override.split(".")[0]][override.split(".")[1].split("=")[0]])
+                    self.conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(
                         override.split("=")[1])
         else:
             print(
@@ -196,7 +175,7 @@ class Sampler:
         self.cb_tor = self.cb_tor.to(self.device)
 
         model = RoseTTAFoldModel.RoseTTAFoldModule(
-            **self._conf.model,
+            **self.conf.model,
             aamask=self.aamask,
             atom_type_index=self.atom_type_index,
             ljlk_parameters=self.ljlk_parameters,
@@ -210,8 +189,8 @@ class Sampler:
 
         model = model.eval()
         self._log.info(f'Loading checkpoint.')
-        if not self._conf.inference.zero_weights:
-            model.load_state_dict(self.ckpt[self._conf.inference.state_dict_to_load], strict=True)
+        if not self.conf.inference.zero_weights:
+            model.load_state_dict(self.ckpt[self.conf.inference.state_dict_to_load], strict=True)
         return model
 
     def construct_contig(self, target_feats):
@@ -230,7 +209,7 @@ class Sampler:
         """Make length-specific denoiser."""
         denoise_kwargs = OmegaConf.to_container(self.diffuser_conf)
         denoise_kwargs.update(OmegaConf.to_container(self.denoiser_conf))
-        aa_decode_steps = min(denoise_kwargs['aa_decode_steps'], denoise_kwargs['partial_T'] or 999)
+        aa_decode_steps = denoise_kwargs['aa_decode_steps']
         denoise_kwargs.update({
             'L': L,
             'diffuser': self.diffuser,
@@ -241,29 +220,18 @@ class Sampler:
         })
         return iu.Denoise(**denoise_kwargs)
 
-    def sample_init(self, return_forward_trajectory=False) -> Indep:
+    def sample_init(self) -> Indep:
         """Creates initial features to start the sampling process."""
 
         # moved this here as should be updated each iteration of diffusion
         self.contig_map = self.construct_contig(self.target_feats)
         L = len(self.target_feats['pdb_idx'])
 
-        indep_orig = aa_model.make_indep(self._conf.inference.input_pdb, self._conf.inference.ligand)
+        indep_orig = aa_model.make_indep(self.conf.inference.input_pdb, self.conf.inference.ligand)
         indep, self.is_diffused, self.is_seq_masked = self.model_adaptor.insert_contig(indep_orig, self.contig_map)
-        self.t_step_input = self._conf.diffuser.T
-        if self.diffuser_conf.partial_T:
-            mappings = self.contig_map.get_mappings()
-            assert indep.xyz.shape[0] == L + torch.sum(
-                indep.is_sm), f"there must be a coordinate in the input PDB for each residue implied by the contig string for partial diffusion.  length of input PDB != length of contig string: {indep.xyz.shape[0]} != {L + torch.sum(indep.is_sm)}"
-            assert torch.all(self.is_diffused[indep.is_sm] == 0), f"all ligand atoms must be in the motif"
-            assert (mappings['con_hal_idx0'] == mappings[
-                'con_ref_idx0']).all(), 'all positions in the input PDB must correspond to the same index in the output pdb'
-            indep = indep_orig
+        self.t_step_input = self.conf.diffuser.T
         indep.seq[self.is_seq_masked] = ChemData().MASKINDEX
         # Diffuse the contig-mapped coordinates 
-        if self.diffuser_conf.partial_T:
-            self.t_step_input = self.diffuser_conf.partial_T
-            assert self.diffuser_conf.partial_T <= self.diffuser_conf.T
         t_list = np.arange(1, self.t_step_input + 1)
         atom_mask = None
         seq_one_hot = None
@@ -271,7 +239,6 @@ class Sampler:
             indep.xyz,
             seq_one_hot,
             atom_mask,
-            indep.is_sm,
             diffusion_mask=~self.is_diffused,
             t_list=t_list,
             diffuse_sidechains=self.preprocess_conf.sidechain_input,
@@ -289,7 +256,6 @@ class Sampler:
 
         return indep
 
-
     def sample_step(self, t, indep: Indep, rfo: OutputFeatures) -> tuple[
         torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, OutputFeatures]:
         '''
@@ -305,7 +271,7 @@ class Sampler:
         seq_t = torch.clone(seq_init)
 
         # Self conditioning
-        if ((t < self.diffuser.T) and (t != self.diffuser_conf.partial_T)) and self._conf.inference.str_self_cond:
+        if ((t < self.diffuser.T) and (t != self.diffuser_conf.partial_T)) and self.conf.inference.str_self_cond:
             rfi = aa_model.self_cond(indep, rfi, rfo)
 
         with torch.no_grad():
@@ -332,7 +298,7 @@ class Sampler:
         self._log.info(
             f'{current_time}: Timestep {t}, current sequence: {ChemData().seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
 
-        if t > self._conf.inference.final_step:
+        if t > self.conf.inference.final_step:
             x_t_1, seq_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
                 xt=rfi.xyz[0, :, :14].cpu(),
                 px0=px0,
@@ -360,6 +326,10 @@ class Sampler:
         seq_t_1 = seq_t_1.cpu()
 
         return px0, x_t_1, seq_t_1, tors_t_1, rfo
+
+    @property
+    def conf(self):
+        return self._conf
 
 
 @contextmanager

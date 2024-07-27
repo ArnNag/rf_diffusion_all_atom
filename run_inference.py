@@ -14,43 +14,34 @@ See https://hydra.cc/docs/advanced/hydra-command-line-flags/ for more options.
 
 """
 
-import os
-
-import re
-import os, time, pickle
 import dataclasses
-from typing import Tuple, List
-
-import torch
-from omegaconf import DictConfig, OmegaConf
-import hydra
-import logging
-
-from torch import Tensor
-
-from aa_model import Indep
-from util import writepdb_multi, writepdb
-from inference import utils as iu
-from icecream import ic
-from hydra.core.hydra_config import HydraConfig
-import numpy as np
-import random
 import glob
-import inference.model_runners
-    from inference.model_runners import Sampler
-import rf2aa.tensor_util
-import idealize_backbone
-import rf2aa.util
-import aa_model
-import copy
+import logging
+import os
+import pickle
+import random
+import re
+import time
 
 import e3nn.o3 as o3
+import hydra
+import numpy as np
+import torch
+from omegaconf import DictConfig, OmegaConf
+from torch import Tensor
+
+import aa_model
+import idealize_backbone
+import rf2aa.tensor_util
+import rf2aa.util
+from aa_model import Indep
+from inference.model_runners import Sampler
 
 
 def warm_up_spherical_harmonics():
-    ''' o3.spherical_harmonics returns different values on 1st call vs all subsequent calls
+    """ o3.spherical_harmonics returns different values on 1st call vs all subsequent calls
     All subsequent calls are reproducible.
-    '''
+    """
     if torch.cuda.is_available():
         device = torch.device('cuda')
     else:
@@ -88,6 +79,9 @@ def main(conf: DictConfig) -> None:
 
 
 def get_sampler(conf: DictConfig) -> Sampler:
+    """
+    Instantiates a Sampler from the user-provided configuration.
+    """
     if conf.inference.deterministic:
         make_deterministic()
 
@@ -112,11 +106,11 @@ def get_sampler(conf: DictConfig) -> Sampler:
 
 def sample(sampler: Sampler) -> None:
     log = logging.getLogger(__name__)
-    des_i_start = sampler._conf.inference.design_startnum
-    des_i_end = sampler._conf.inference.design_startnum + sampler.inf_conf.num_designs
-    for i_des in range(sampler._conf.inference.design_startnum,
-                       sampler._conf.inference.design_startnum + sampler.inf_conf.num_designs):
-        if sampler._conf.inference.deterministic:
+    des_i_start = sampler.conf.inference.design_startnum
+    des_i_end = sampler.conf.inference.design_startnum + sampler.inf_conf.num_designs
+    for i_des in range(sampler.conf.inference.design_startnum,
+                       sampler.conf.inference.design_startnum + sampler.inf_conf.num_designs):
+        if sampler.conf.inference.deterministic:
             seed_all(i_des)
 
         start_time = time.time()
@@ -175,11 +169,11 @@ def save_outputs(sampler: Sampler, out_prefix: str, indep: Indep, denoised_xyz_s
 
     final_seq = seq_stack[-1]
 
-    if sampler._conf.seq_diffuser.seqdiff is not None:
+    if sampler.conf.seq_diffuser.seqdiff is not None:
         # When doing sequence diffusion the model does not make predictions beyond category 19
         final_seq = final_seq[:, :20]  # [L,20]
 
-    # All samplers now use a one-hot seq so they all need this step
+    # All samplers now use a one-hot seq, so they all need this step
     final_seq[~indep.is_sm, 22:] = 0
     final_seq = torch.argmax(final_seq, dim=-1)
 
@@ -201,10 +195,10 @@ def save_outputs(sampler: Sampler, out_prefix: str, indep: Indep, denoised_xyz_s
     out_unidealized = os.path.join(unidealized_dir, f'{out_tail}.pdb')
     xyz_design[sampler.is_diffused, 3:] = np.nan
     aa_model.write_traj(out_unidealized, xyz_design[None, ...], seq_design, indep.bond_feats, chain_Ls=chain_Ls,
-                        lig_name=sampler._conf.inference.ligand, idx_pdb=indep.idx)
+                        lig_name=sampler.conf.inference.ligand, idx_pdb=indep.idx)
     out_idealized = f'{out_prefix}.pdb'
 
-    aa_model.rename_ligand_atoms(sampler._conf.inference.input_pdb, out_unidealized)
+    aa_model.rename_ligand_atoms(sampler.conf.inference.input_pdb, out_unidealized)
 
     # Idealize the backbone (i.e. write the oxygen at the position inferred from N,C,Ca)
     idealize_backbone.rewrite(out_unidealized, out_idealized)
@@ -216,18 +210,18 @@ def save_outputs(sampler: Sampler, out_prefix: str, indep: Indep, denoised_xyz_s
 
     out = f'{traj_prefix}_Xt-1_traj.pdb'
     aa_model.write_traj(out, denoised_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls,
-                        lig_name=sampler._conf.inference.ligand, idx_pdb=indep.idx)
+                        lig_name=sampler.conf.inference.ligand, idx_pdb=indep.idx)
     xt_traj_path = os.path.abspath(out)
 
     out = f'{traj_prefix}_pX0_traj.pdb'
     aa_model.write_traj(out, px0_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls,
-                        lig_name=sampler._conf.inference.ligand, idx_pdb=indep.idx)
+                        lig_name=sampler.conf.inference.ligand, idx_pdb=indep.idx)
     x0_traj_path = os.path.abspath(out)
 
     # run metadata
-    sampler._conf.inference.input_pdb = os.path.abspath(sampler._conf.inference.input_pdb)
+    sampler.conf.inference.input_pdb = os.path.abspath(sampler.conf.inference.input_pdb)
     trb = dict(
-        config=OmegaConf.to_container(sampler._conf, resolve=True),
+        config=OmegaConf.to_container(sampler.conf, resolve=True),
         device=torch.cuda.get_device_name(torch.cuda.current_device()) if torch.cuda.is_available() else 'CPU',
         px0_xyz_stack=px0_xyz_stack.detach().cpu().numpy(),
         indep={k: v.detach().cpu().numpy() for k, v in dataclasses.asdict(indep).items()},
@@ -237,7 +231,7 @@ def save_outputs(sampler: Sampler, out_prefix: str, indep: Indep, denoised_xyz_s
             trb[key] = value
 
     for out_path in des_path, xt_traj_path, x0_traj_path:
-        aa_model.rename_ligand_atoms(sampler._conf.inference.input_pdb, out_path)
+        aa_model.rename_ligand_atoms(sampler.conf.inference.input_pdb, out_path)
 
     with open(f'{out_prefix}.trb', 'wb') as f_out:
         pickle.dump(trb, f_out)

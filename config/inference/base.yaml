@@ -101,10 +101,8 @@ diffuser:
   schedule_type: linear
   so3_type: igso3
   aa_decode_steps: 40
-  chi_type: wrapped_normal
   crd_scale: 0.0667
   schedule_kwargs: {}
-  partial_T: null    
   so3_schedule_type: linear
   min_b: 1.5
   max_b: 2.5

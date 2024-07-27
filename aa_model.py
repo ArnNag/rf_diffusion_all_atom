@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import assertpy
@@ -272,7 +272,7 @@ class Model:
         a = self.model(**{**rfi_dict, **kwargs})
         return OutputFeatures(*a)
 
-    def insert_contig(self, indep: Indep, contig_map: ContigMap, partial_T=False) -> tuple[Indep, Tensor, Tensor]:
+    def insert_contig(self, indep: Indep, contig_map: ContigMap) -> tuple[Indep, Tensor, Tensor]:
         o = copy.deepcopy(indep)
 
         # Insert small mol into contig_map

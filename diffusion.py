@@ -4,21 +4,16 @@ import pickle
 import numpy as np
 import os
 import logging
-from typing import List
+from typing import Optional
 
 from scipy.spatial.transform import Rotation as scipy_R
 from scipy.spatial.transform import Slerp
 import rotation_conversions
 
-from util import rigid_from_3_points, get_torsions
-
-from util import torsion_indices as TOR_INDICES
-from util import torsion_can_flip as TOR_CAN_FLIP
-from util import reference_angles as REF_ANGLES
+from util import rigid_from_3_points
 
 from util_module import ComputeAllAtomCoords
 
-from chemical import INIT_CRDS
 import igso3
 import time
 
@@ -715,7 +710,7 @@ class SLERP():
         return slerped_crds, slerped_frames
 
 
-class Diffuser():
+class Diffuser:
     # wrapper for yielding diffused coordinates/frames/rotamers  
 
     def __init__(self,
@@ -729,14 +724,10 @@ class Diffuser():
                  schedule_type,
                  so3_schedule_type,
                  so3_type,
-                 chi_type,
                  crd_scale,
                  aa_decode_steps,
                  schedule_kwargs={},
-                 chi_kwargs={},
                  var_scale=1.0,
-                 cache_dir='.',
-                 partial_T=None,
                  truncation_level=2000
                  ):
         """
@@ -775,7 +766,7 @@ class Diffuser():
         # get backbone translation diffuser
         self.eucl_diffuser = EuclideanDiffuser(self.T, b_0, b_T, schedule_type=schedule_type, **schedule_kwargs)
 
-    def diffuse_pose(self, xyz: torch.Tensor, seq: torch.Tensor, atom_mask: torch.Tensor, is_sm,
+    def diffuse_pose(self, xyz: torch.Tensor, seq: Optional[torch.Tensor], atom_mask: Optional[torch.Tensor],
                      diffuse_sidechains=False, include_motif_sidechains=True,
                      diffusion_mask=None, t_list=None) -> tuple[torch.Tensor, torch.Tensor]:
         """
