@@ -37,7 +37,7 @@ import numpy as np
 import random
 import glob
 import inference.model_runners
-from inference.model_runners import NRBStyleSelfCond
+    from inference.model_runners import Sampler
 import rf2aa.tensor_util
 import idealize_backbone
 import rf2aa.util
@@ -110,7 +110,7 @@ def get_sampler(conf: DictConfig) -> Sampler:
     return sampler
 
 
-def sample(sampler: NRBStyleSelfCond) -> None:
+def sample(sampler: Sampler) -> None:
     log = logging.getLogger(__name__)
     des_i_start = sampler._conf.inference.design_startnum
     des_i_end = sampler._conf.inference.design_startnum + sampler.inf_conf.num_designs
@@ -132,7 +132,7 @@ def sample(sampler: NRBStyleSelfCond) -> None:
         save_outputs(sampler, out_prefix, *sampler_out)
 
 
-def sample_one(sampler: NRBStyleSelfCond, simple_logging=False) -> tuple[Indep, Tensor, Tensor, list[Tensor]]:
+def sample_one(sampler: Sampler, simple_logging=False) -> tuple[Indep, Tensor, Tensor, list[Tensor]]:
     # For intermediate output logging
     indep = sampler.sample_init()
 
@@ -169,7 +169,7 @@ def sample_one(sampler: NRBStyleSelfCond, simple_logging=False) -> tuple[Indep, 
     return indep, denoised_xyz_stack, px0_xyz_stack, seq_stack
 
 
-def save_outputs(sampler: NRBStyleSelfCond, out_prefix: str, indep: Indep, denoised_xyz_stack: Tensor,
+def save_outputs(sampler: Sampler, out_prefix: str, indep: Indep, denoised_xyz_stack: Tensor,
                  px0_xyz_stack: Tensor, seq_stack: list[Tensor]) -> None:
     log = logging.getLogger(__name__)
 
