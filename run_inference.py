@@ -106,7 +106,7 @@ def get_sampler(conf: DictConfig) -> NRBStyleSelfCond:
 
     conf.inference.design_startnum = design_startnum
     # Initialize sampler and target/contig.
-    sampler = inference.model_runners.sampler_selector(conf)
+    sampler = NRBStyleSelfCond(conf)
     return sampler
 
 
