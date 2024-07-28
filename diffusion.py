@@ -1,5 +1,6 @@
 # script for diffusion protocols 
 import torch
+from torch import Tensor
 import pickle
 import numpy as np
 import os
@@ -108,7 +109,7 @@ def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}, inference=Fa
     else:
         raise NotImplementedError(
             'Cosine schedule has been disabled because variance with different T will need to be worked out')
-        schedule = cosine_interp(T, bT, b0)
+        # schedule = cosine_interp(T, bT, b0)
 
         # get alphabar_t for convenience
     alpha_schedule = 1 - schedule
@@ -181,30 +182,33 @@ class EuclideanDiffuser:
     def diffuse_translations(self, xyz, diffusion_mask=None, var_scale=1):
         return self.apply_kernel_recursive(xyz, diffusion_mask, var_scale)
 
-    def apply_kernel(self, x, t, diffusion_mask=None, var_scale=1):
+    def apply_kernel(self, xyz, t, diffusion_mask=None, var_scale=1):
         """
         Applies a noising kernel to the points in x 
 
         Parameters:
-            x (torch.tensor, required): (N,3,3) set of backbone coordinates 
+            xyz (torch.tensor, required): (L, 3, 3) set of backbone coordinates
+            # TODO: what do the second and third axes represent?
+                second axis seems to correspond to the three atoms in the backbone frame
+                third axis seems to correspond to Euclidean coordinates
 
             t (int, required): Which timestep
 
-            noise_scale (float, required): scale for noise 
+            var_scale (float, required): scale for noise
         """
         t_idx = t - 1  # bring from 1-indexed to 0-indexed
 
-        assert len(x.shape) == 3
-        L, _, _ = x.shape
+        assert len(xyz.shape) == 3
+        L, _, _ = xyz.shape
 
-        # c-alpha crds 
-        ca_xyz = x[:, 1, :]
+        # c-alpha crds, shape [L, 3]
+        ca_xyz = xyz[:, 1, :]
 
-        b_t = self.beta_schedule[t_idx]
+        b_t = self.beta_schedule[t_idx]  # shape []
 
         # get the noise at timestep t
         mean = torch.sqrt(1 - b_t) * ca_xyz
-        var = torch.ones(L, 3) * (b_t) * var_scale
+        var = b_t * var_scale
 
         sampled_crds = torch.normal(mean, torch.sqrt(var))
         delta = sampled_crds - ca_xyz
@@ -212,15 +216,15 @@ class EuclideanDiffuser:
         if not diffusion_mask is None:
             delta[diffusion_mask, ...] = 0
 
-        out_crds = x + delta[:, None, :]
+        out_crds = xyz + delta[:, None, :]
 
         return out_crds, delta
 
     def apply_kernel_recursive(self, xyz, diffusion_mask=None, var_scale=1):
         """
-        Repeatedly apply self.apply_kernel T times and return all crds 
+        Repeatedly apply self.apply_kernel T times and return all crds
+        # TODO: why can't we just add the variance?
         """
-        bb_stack = []
         T_stack = []
 
         cur_xyz = torch.clone(xyz)
@@ -230,10 +234,9 @@ class EuclideanDiffuser:
                                                t,
                                                var_scale=var_scale,
                                                diffusion_mask=diffusion_mask)
-            bb_stack.append(cur_xyz)
             T_stack.append(cur_T)
 
-        return torch.stack(bb_stack).transpose(0, 1), torch.stack(T_stack).transpose(0, 1)
+        return torch.stack(T_stack).transpose(0, 1)
 
 
 def write_pkl(save_path: str, pkl_data):
@@ -373,7 +376,7 @@ class IGSO3:
         else:
             raise ValueError(f'Unrecognize schedule {self.schedule}')
 
-    def g(self, t) -> torch.Tensor:
+    def g(self, t) -> Tensor:
         """g returns the drift coefficient at time t
 
         since 
@@ -470,8 +473,8 @@ class IGSO3:
         sigma_idcs = [self.t_to_idx(t) for t in ts]
         return self.igso3_vals['exp_score_norms'][sigma_idcs]
 
-    def diffuse_frames(self, xyz: torch.Tensor | np.ndarray, t_list: torch.Tensor | np.ndarray, diffusion_mask=None) -> \
-    tuple[np.ndarray, np.ndarray]:
+    def diffuse_frames(self, xyz: Tensor | np.ndarray, t_list: Tensor | np.ndarray, diffusion_mask=None) -> \
+            tuple[np.ndarray, np.ndarray]:
         """
         Perform spherical linear interpolation from the True coordinate frame for each
         residue to a randomly sampled coordinate frame
@@ -766,9 +769,9 @@ class Diffuser:
         # get backbone translation diffuser
         self.eucl_diffuser = EuclideanDiffuser(self.T, b_0, b_T, schedule_type=schedule_type, **schedule_kwargs)
 
-    def diffuse_pose(self, xyz: torch.Tensor, seq: Optional[torch.Tensor], atom_mask: Optional[torch.Tensor],
+    def diffuse_pose(self, xyz: Tensor, seq: Optional[torch.Tensor], atom_mask: Optional[torch.Tensor],
                      diffuse_sidechains=False, include_motif_sidechains=True,
-                     diffusion_mask=None, t_list=None) -> tuple[torch.Tensor, torch.Tensor]:
+                     diffusion_mask=None, t_list=None) -> tuple[Tensor, Tensor]:
         """
         Given full atom xyz, sequence and atom mask, diffuse the protein 
         translations, rotations, and chi angles
@@ -813,14 +816,12 @@ class Diffuser:
 
         # 1 get translations
         tick = time.time()
-        diffused_T, deltas = self.eucl_diffuser.diffuse_translations(xyz[:, :3, :].clone(),
+        deltas = self.eucl_diffuser.diffuse_translations(xyz[:, :3, :].clone(),
                                                                      diffusion_mask=diffusion_mask)
         #print('Time to diffuse coordinates: ',time.time()-tick)
-        diffused_T /= self.crd_scale
         deltas /= self.crd_scale
 
         # 2 get  frames
-        is_motif = diffusion_mask
         # assert is_motif[is_sm].all(), 'small molecules are not currently diffused, needs checking'
         tick = time.time()
 
@@ -835,7 +836,6 @@ class Diffuser:
         cum_delta = deltas.cumsum(dim=1)
         # The coordinates of the translated AND rotated frames
         diffused_BB = (torch.from_numpy(diffused_frame_crds) + cum_delta[:, :, None, :]).transpose(0, 1)  # [n,L,3,3]
-        #diffused_BB  = torch.from_numpy(diffused_frame_crds).transpose(0,1)
 
         # Full atom diffusions at all timepoints 
         if diffuse_sidechains:
@@ -853,12 +853,12 @@ class Diffuser:
 
             diffused_torsions_trig = torch.stack([torch.cos(diffused_torsions),
                                                   torch.sin(diffused_torsions)], dim=-1)
-            fa_stack = []
+            fa_stack: list[Tensor] = []
             if t_list is None:
                 for t, alphas_t in enumerate(diffused_torsions_trig.transpose(0, 1)):
                     xyz_bb_t = diffused_BB[t, :, :3]
 
-                    _, fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                    _, fullatom_t = get_allatom(seq.unsqueeze(0), xyz_bb_t.unsqueeze(0), alphas_t.unsqueeze(0))
                     fa_stack.append(fullatom_t)
 
             else:
@@ -867,7 +867,7 @@ class Diffuser:
                     xyz_bb_t = diffused_BB[t_idx, :, :3]
                     alphas_t = diffused_torsions_trig.transpose(0, 1)[t_idx]
 
-                    _, fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                    _, fullatom_t = get_allatom(seq.unsqueeze(0), xyz_bb_t.unsqueeze(0), alphas_t.unsqueeze(0))
                     fa_stack.append(fullatom_t.squeeze())
 
             fa_stack = torch.stack(fa_stack, dim=0)

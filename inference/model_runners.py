@@ -11,7 +11,7 @@ import rf2aa.util
 from rf2aa.util_module import XYZConverter
 import rf2aa.tensor_util
 import aa_model
-from aa_model import Indep, OutputFeatures
+from aa_model import Indep, OutputFeatures, ModelAdaptor
 
 from diffusion import Diffuser
 from contigs import ContigMap
@@ -55,7 +55,7 @@ class Sampler:
         self.load_checkpoint()
         self.assemble_config_from_chk()
         # Now actually load the model weights into RF
-        self.model = self.load_model()
+        self.model: RoseTTAFoldModel = self.load_model()
 
         # Initialize helper objects
         self.inf_conf = self.conf.inference
@@ -66,7 +66,7 @@ class Sampler:
         self.diffuser_conf = self.conf.diffuser
         self.preprocess_conf = self.conf.preprocess
         self.diffuser = Diffuser(**self.conf.diffuser)
-        self.model_adaptor = aa_model.Model(self.conf)
+        self.model_adaptor = ModelAdaptor(self.conf)
         # Temporary hack
         self.model.assert_single_sequence_input = True
         self.model_adaptor.model = self.model
@@ -89,14 +89,18 @@ class Sampler:
         self.recycle_schedule = iu.recycle_schedule(self.T, recycle_schedule, self.inf_conf.num_recycles)
 
     @property
+    def conf(self):
+        return self._conf
+
+    @property
     def T(self):
-        '''
+        """
             Return the maximum number of timesteps
             that this design protocol will perform.
 
             Output:
                 T (int): The maximum number of timesteps to perform
-        '''
+        """
         return self.diffuser_conf.T
 
     def load_checkpoint(self) -> None:
@@ -193,7 +197,7 @@ class Sampler:
             model.load_state_dict(self.ckpt[self.conf.inference.state_dict_to_load], strict=True)
         return model
 
-    def construct_contig(self, target_feats):
+    def construct_contig(self, target_feats) -> ContigMap:
         """Create contig from target features."""
         if self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs:
             seq_len = target_feats['seq'].shape[0]
@@ -205,7 +209,7 @@ class Sampler:
             self.contig_conf.contigs = [f'{L}-{L}']
         return ContigMap(target_feats, **self.contig_conf)
 
-    def construct_denoiser(self, L, visible):
+    def construct_denoiser(self, L: int, visible) -> iu.Denoise:
         """Make length-specific denoiser."""
         denoise_kwargs = OmegaConf.to_container(self.diffuser_conf)
         denoise_kwargs.update(OmegaConf.to_container(self.denoiser_conf))
@@ -224,11 +228,12 @@ class Sampler:
         """Creates initial features to start the sampling process."""
 
         # moved this here as should be updated each iteration of diffusion
-        self.contig_map = self.construct_contig(self.target_feats)
+        self.contig_map: ContigMap = self.construct_contig(self.target_feats)
         L = len(self.target_feats['pdb_idx'])
 
-        indep_orig = aa_model.make_indep(self.conf.inference.input_pdb, self.conf.inference.ligand)
-        indep, self.is_diffused, self.is_seq_masked = self.model_adaptor.insert_contig(indep_orig, self.contig_map)
+        indep_orig: Indep = aa_model.make_indep(self.conf.inference.input_pdb, self.conf.inference.ligand)
+        indep, self.is_diffused = self.model_adaptor.insert_contig(indep_orig, self.contig_map)
+        self.is_seq_masked = self.is_diffused
         self.t_step_input = self.conf.diffuser.T
         indep.seq[self.is_seq_masked] = ChemData().MASKINDEX
         # Diffuse the contig-mapped coordinates 
@@ -248,7 +253,7 @@ class Sampler:
         xt = torch.clone(xT)
         indep.xyz = xt
 
-        self.denoiser = self.construct_denoiser(len(self.contig_map.ref), visible=~self.is_diffused)
+        self.denoiser: iu.Denoise = self.construct_denoiser(len(self.contig_map.ref), visible=~self.is_diffused)
 
         self.msa_prev = None
         self.pair_prev = None
@@ -256,13 +261,13 @@ class Sampler:
 
         return indep
 
-    def sample_step(self, t, indep: Indep, rfo: OutputFeatures) -> tuple[
+    def sample_step(self, t, indep: Indep, rfo: OutputFeatures | None) -> tuple[
         torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, OutputFeatures]:
-        '''
+        """
         Generate the next pose that the model should be supplied at timestep t-1.
         Self-conditioning done in the style of Nathaniel R. Bennett
         # TODO: add reference
-        '''
+        """
 
         rfi = self.model_adaptor.prepro(indep, t, self.is_diffused)
         rf2aa.tensor_util.to_device(rfi, self.device)
@@ -326,10 +331,6 @@ class Sampler:
         seq_t_1 = seq_t_1.cpu()
 
         return px0, x_t_1, seq_t_1, tors_t_1, rfo
-
-    @property
-    def conf(self):
-        return self._conf
 
 
 @contextmanager

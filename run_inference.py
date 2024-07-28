@@ -34,7 +34,7 @@ import aa_model
 import idealize_backbone
 import rf2aa.tensor_util
 import rf2aa.util
-from aa_model import Indep
+from aa_model import Indep, OutputFeatures
 from inference.model_runners import Sampler
 
 
@@ -58,7 +58,7 @@ def make_deterministic(seed=0):
     warm_up_spherical_harmonics()
 
 
-def seed_all(seed=0):
+def seed_all(seed: int = 0):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -74,7 +74,7 @@ def get_seeds():
 
 @hydra.main(version_base=None, config_path='config/inference', config_name='aa')
 def main(conf: DictConfig) -> None:
-    sampler = get_sampler(conf)
+    sampler: Sampler = get_sampler(conf)
     sample(sampler)
 
 
@@ -106,8 +106,8 @@ def get_sampler(conf: DictConfig) -> Sampler:
 
 def sample(sampler: Sampler) -> None:
     log = logging.getLogger(__name__)
-    des_i_start = sampler.conf.inference.design_startnum
-    des_i_end = sampler.conf.inference.design_startnum + sampler.inf_conf.num_designs
+    des_i_start: int = sampler.conf.inference.design_startnum
+    des_i_end: int = sampler.conf.inference.design_startnum + sampler.inf_conf.num_designs
     for i_des in range(sampler.conf.inference.design_startnum,
                        sampler.conf.inference.design_startnum + sampler.inf_conf.num_designs):
         if sampler.conf.inference.deterministic:
@@ -121,20 +121,20 @@ def sample(sampler: Sampler) -> None:
             log.info(f'(cautious mode) Skipping this design because {out_prefix}.pdb already exists.')
             continue
         log.info(f'making design {i_des} of {des_i_start}:{des_i_end}')
-        sampler_out = sample_one(sampler)
+        sampler_out: tuple[Indep, Tensor, Tensor, list[Tensor]] = sample_one(sampler)
         log.info(f'Finished design in {(time.time() - start_time) / 60:.2f} minutes')
         save_outputs(sampler, out_prefix, *sampler_out)
 
 
 def sample_one(sampler: Sampler, simple_logging=False) -> tuple[Indep, Tensor, Tensor, list[Tensor]]:
     # For intermediate output logging
-    indep = sampler.sample_init()
+    indep: Indep = sampler.sample_init()
 
-    denoised_xyz_stack = []
-    px0_xyz_stack = []
-    seq_stack = []
+    denoised_xyz_list: list[Tensor] = []
+    px0_xyz_list: list[Tensor] = []
+    seq_list: list[Tensor] = []
 
-    rfo = None
+    rfo: OutputFeatures | None = None
 
     # Loop over number of reverse diffusion time steps.
     for t in range(int(sampler.t_step_input), sampler.inf_conf.final_step - 1, -1):
@@ -150,17 +150,18 @@ def sample_one(sampler: Sampler, simple_logging=False) -> tuple[Indep, Tensor, T
 
         aa_model.assert_has_coords(indep.xyz, indep)
 
-        px0_xyz_stack.append(px0)
-        denoised_xyz_stack.append(x_t)
-        seq_stack.append(seq_t)
+        px0_xyz_list.append(px0)
+        denoised_xyz_list.append(x_t)
+        seq_list.append(seq_t)
+
+    denoised_xyz_stacked: Tensor = torch.stack(denoised_xyz_list)
+    px0_xyz_stacked: Tensor = torch.stack(px0_xyz_list)
 
     # Flip order for better visualization in pymol
-    denoised_xyz_stack = torch.stack(denoised_xyz_stack)
-    denoised_xyz_stack = torch.flip(denoised_xyz_stack, [0, ])
-    px0_xyz_stack = torch.stack(px0_xyz_stack)
-    px0_xyz_stack = torch.flip(px0_xyz_stack, [0, ])
+    denoised_xyz_stack = torch.flip(denoised_xyz_stacked, [0, ])
+    px0_xyz_stacked = torch.flip(px0_xyz_stacked, [0, ])
 
-    return indep, denoised_xyz_stack, px0_xyz_stack, seq_stack
+    return indep, denoised_xyz_stack, px0_xyz_stacked, seq_list
 
 
 def save_outputs(sampler: Sampler, out_prefix: str, indep: Indep, denoised_xyz_stack: Tensor,

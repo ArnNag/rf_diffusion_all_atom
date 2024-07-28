@@ -67,6 +67,9 @@ def chain_letters_from_same_chain(same_chain):
 
 @dataclass
 class Indep:
+    """
+    An instance of Indep is created in Sampler.sample_init.
+    """
     seq: torch.Tensor  # [L]
     xyz: torch.Tensor  # [L, 36?, 3]
     idx: torch.Tensor
@@ -181,8 +184,6 @@ def make_indep(pdb: str, ligand: Optional[str] = None, center: bool = True) -> I
     chirals = torch.Tensor()
     atom_frames = torch.zeros((0, 3, 2))
 
-    xyz_prot, mask_prot, idx_prot, seq_prot = parse_pdb(pdb, seq=True)
-
     target_feats = inference.utils.parse_pdb(pdb)
     xyz_prot, mask_prot, idx_prot, seq_prot = target_feats['xyz'], target_feats['mask'], target_feats['idx'], \
         target_feats['seq']
@@ -259,7 +260,7 @@ def make_indep(pdb: str, ligand: Optional[str] = None, center: bool = True) -> I
     return indep
 
 
-class Model:
+class ModelAdaptor:
 
     def __init__(self, conf: DictConfig):
         self.conf = conf
@@ -272,8 +273,8 @@ class Model:
         a = self.model(**{**rfi_dict, **kwargs})
         return OutputFeatures(*a)
 
-    def insert_contig(self, indep: Indep, contig_map: ContigMap) -> tuple[Indep, Tensor, Tensor]:
-        o = copy.deepcopy(indep)
+    def insert_contig(self, indep: Indep, contig_map: ContigMap) -> tuple[Indep, Tensor]:
+        o: Indep = copy.deepcopy(indep)
 
         # Insert small mol into contig_map
         all_chains = set(ch for ch, _ in contig_map.hal)
@@ -336,7 +337,7 @@ class Model:
         o.xyz[o.is_sm, :3] = sm_ca[..., None, :]
         o.xyz[o.is_sm] += chemical.INIT_CRDS
 
-        return o, is_diffused, is_diffused
+        return o, is_diffused
 
     def prepro(self, indep: Indep, t, is_diffused) -> InputFeatures:
         """
